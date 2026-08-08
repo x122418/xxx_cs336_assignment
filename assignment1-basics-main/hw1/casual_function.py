@@ -23,21 +23,39 @@
 #     pair = (byte_tuple[i],byte_tuple[i+1])
 #     dic[pair] += 1
 
-vocab = {num:bytes([num]) for num in range(10)}
+# vocab = {num:bytes([num]) for num in range(10)}
 
 
-print(vocab)
-import regex as re
+# print(vocab)
+# import regex as re
 
-# special_tokens = []
-special_tokens = ['<|endoftext|>']
-if special_tokens == []: 
-    # 单独处理
-    pass
+# # special_tokens = []
+# special_tokens = ['<|endoftext|>']
+# if special_tokens == []: 
+#     # 单独处理
+#     pass
 
-special_token_pattern = '|'.join(re.escape(tok) for tok in special_tokens)
+# special_token_pattern = '|'.join(re.escape(tok) for tok in special_tokens)
 
 
-document = "<|endoftext|>BBB<|endoftext|>"
-after = re.split(special_token_pattern, document)
-print(after)
+# document = "<|endoftext|>BBB<|endoftext|>"
+# after = re.split(special_token_pattern, document)
+# print(after)
+
+# import regex as re
+# PAT = 'AB'
+# s =  'mmmmmAB nnn AB'
+# ans1 = re.findall(PAT, s)
+# print(ans1)
+# for item in re.finditer(PAT, s):
+#     print(item.group())
+
+
+# 旧状态：(a, a, a) → 2
+# best_pair：(a, a)
+# 正确的新状态：(aa, a) → 2
+
+x = (a, a, a)
+d = {x:2}
+b_p = (a, a)
+
