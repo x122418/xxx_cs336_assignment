@@ -13,10 +13,20 @@ class Tokenizer:
         self.vocab = vocab
         self.merges = merges
         self.special_tokens = special_tokens or []
+        max_token_id = max(vocab.keys())
+        # 处理特殊情况 存在 specical token不在vocab中
+        for token in self.special_tokens:
+            token_bytes = token.encode('utf-8')
+            if token_bytes not in self.vocab.values():
+                self.vocab[max_token_id+1] = token_bytes
+                max_token_id += 1
+                
 
         # 构建反向映射：bytes → token_id（用于 encode）
         self.anti_vocab = {v: k for k, v in vocab.items()}
         self.merges_rank = {merge:num for num, merge in enumerate(merges)}
+
+
 
         
         return
