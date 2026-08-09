@@ -167,4 +167,5 @@ data/
 checkpoints/
 wandb/
 *.pt
+!tests/fixtures/ts_tests/model.pt
 *.pth
