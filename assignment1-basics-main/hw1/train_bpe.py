@@ -5,7 +5,6 @@ from collections import defaultdict
 # pre-token pattern  来自gpt-2论文原文
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
-
 # 分块读取文档辅助函数
 def read_file_in_chunks(input_path, chunk_size=1024 * 1024):
     with open(input_path, "r", encoding="utf-8") as f:
@@ -31,16 +30,16 @@ def train_bpe(
         vocab[idx + 256] = special_token.encode("utf-8")
 
     with open(input_path, "r", encoding="utf-8") as f:
-        document = f.read()
+        text = f.read()
 
-    # 将document根据specail token 切分为 segment
+    # 将text根据specail token 切分为 segment
     special_token_pattern = "|".join(re.escape(tok) for tok in special_tokens)
     if special_tokens != []:
-        document_segment_list = re.split(special_token_pattern, document)
+        text_segment_list = re.split(special_token_pattern, text)
     else:
-        document_segment_list = [document]
+        text_segment_list = [text]
 
-    for segment in document_segment_list:
+    for segment in text_segment_list:
         for match in re.finditer(PAT, segment):
             # match.group():str 为PAT直接提取出的pre-token string
             cur_pre_token_str = match.group()
@@ -102,3 +101,15 @@ def train_bpe(
         vocab_cur_size += 1
 
     return vocab, merges
+
+if __name__ == "main":
+    # 只在直接运行 train_bpe.py 时执行的临时测试
+    vocab, merges = train_bpe(
+        input_path="/home/huangjiaqi/xxx_cs336_assignment/assignment1-basics-main/data/TinyStoriesV2-GPT4-valid.txt",
+        vocab_size=257,
+        special_tokens=[],
+    )
+
+    print(len(vocab))
+    print(merges)
+    print(vocab[256])
