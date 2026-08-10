@@ -13,6 +13,7 @@ from hw1.train_bpe import train_bpe
 from hw1.tokenizer import Tokenizer
 from hw2.linear import Linear
 from hw2.embedding import Embedding
+from hw2.rms_norm import RMSnorm
 
 def run_linear(
     d_in: int,
@@ -384,7 +385,9 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
-    raise NotImplementedError
+    rms_layer = RMSnorm(d_model, eps)
+    rms_layer.load_state_dict({"rms_weight":weights})
+    return rms_layer(in_features)
 
 
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
