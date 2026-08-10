@@ -1,6 +1,6 @@
 # CS336 学习与作业进度
 
-这是我的 Stanford CS336 学习与作业仓库，用于在本地、GitHub 和 服务器之间同步代码与学习进度。
+这是Aaron(xxx)的 Stanford CS336 作业仓库，用于在本地、GitHub 和 服务器之间同步代码与学习进度。
 
 ## 当前进度
 
@@ -10,6 +10,7 @@
 #### 已完成
 
 - [x] BPE train baseline实现, Tokenizer 类的baseline版本构建
+- [x] 学习einops用法, 实现class Linear, RMSnorm等
 
 
 #### TODO
