@@ -12,6 +12,7 @@ from torch import Tensor
 from hw1.train_bpe import train_bpe
 from hw1.tokenizer import Tokenizer
 from hw2.linear import Linear
+from hw2.embedding import Embedding
 
 def run_linear(
     d_in: int,
@@ -54,8 +55,9 @@ def run_embedding(
     Returns:
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
-
-    raise NotImplementedError
+    embedding_layer = Embedding(vocab_size, d_model)
+    embedding_layer.load_state_dict({'embedding_weights':weights})
+    return embedding_layer(token_ids)
 
 
 def run_swiglu(
