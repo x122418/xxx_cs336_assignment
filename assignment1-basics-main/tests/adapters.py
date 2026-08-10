@@ -14,6 +14,8 @@ from hw1.tokenizer import Tokenizer
 from hw2.linear import Linear
 from hw2.embedding import Embedding
 from hw2.rms_norm import RMSnorm
+from hw2.SwiGLU import silu, SwiGLU
+
 
 def run_linear(
     d_in: int,
@@ -33,8 +35,8 @@ def run_linear(
     Returns:
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
-    linear_layer = Linear(d_in,d_out)
-    linear_layer.load_state_dict({"weight":weights})
+    linear_layer = Linear(d_in, d_out)
+    linear_layer.load_state_dict({"weight": weights})
     return linear_layer(in_features)
 
 
@@ -57,7 +59,7 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
     embedding_layer = Embedding(vocab_size, d_model)
-    embedding_layer.load_state_dict({'embedding_weights':weights})
+    embedding_layer.load_state_dict({"embedding_weights": weights})
     return embedding_layer(token_ids)
 
 
@@ -90,7 +92,11 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    raise NotImplementedError
+    swiglu = SwiGLU(d_model, d_ff)
+    swiglu.load_state_dict(
+        {"w1.weight": w1_weight, "w2.weight": w2_weight, "w3.weight": w3_weight}
+    )
+    return swiglu(in_features)
 
 
 def run_scaled_dot_product_attention(
@@ -386,7 +392,7 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     rms_layer = RMSnorm(d_model, eps)
-    rms_layer.load_state_dict({"rms_weight":weights})
+    rms_layer.load_state_dict({"rms_weight": weights})
     return rms_layer(in_features)
 
 
@@ -401,7 +407,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return silu(in_features)
 
 
 def run_get_batch(
@@ -461,7 +467,9 @@ def run_cross_entropy(
     raise NotImplementedError
 
 
-def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
+def run_gradient_clipping(
+    parameters: Iterable[torch.nn.Parameter], max_l2_norm: float
+) -> None:
     """Given a set of parameters, clip their combined gradients to have l2 norm at most max_l2_norm.
 
     Args:
@@ -569,6 +577,7 @@ def get_tokenizer(
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
     return Tokenizer(vocab, merges, special_tokens)
+
 
 def run_train_bpe(
     input_path: str | os.PathLike,
