@@ -16,6 +16,7 @@ from hw2.embedding import Embedding
 from hw2.rms_norm import RMSnorm
 from hw2.SwiGLU import silu, SwiGLU
 from hw2.rope import RotaryPositionalEmbedding
+from hw2.softmax import softmax
 
 
 def run_linear(
@@ -447,7 +448,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    raise NotImplementedError
+    return softmax(in_features, dim)
 
 
 def run_cross_entropy(

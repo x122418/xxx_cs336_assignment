@@ -17,14 +17,16 @@ class RotaryPositionalEmbedding(nn.Module):
                 "half_max_s -> 1 half_max_s"
             )
         )
-        # 表示所有的sin值 包括max_seq_len行 d_k//2 列
+        # 表示所有的sin值 包括max_seq_len行 d_k//2 列  由于可以反复利用并且不会改动 所以注册为缓存 而非 参数
         self.register_buffer("sin_table", torch.sin(theta_ik_table), persistent=False)
         self.register_buffer("cos_table", torch.cos(theta_ik_table), persistent=False)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+        # 在dim维度上 显式拆分为成对的两组
         x_tmp = rearrange(x, "... (half_d two) -> ... half_d two", two = 2)
         x_group1 = x_tmp[..., 0]
         x_group2 = x_tmp[..., 1]
+        # 逐元素 完成旋转计算
         selected_sin_table = self.sin_table[token_positions]
         selected_cos_table = self.cos_table[token_positions]
         x_rotated_group1 = x_group1 * selected_cos_table - x_group2 * selected_sin_table
