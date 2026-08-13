@@ -17,6 +17,8 @@ from hw2.rms_norm import RMSnorm
 from hw2.SwiGLU import silu, SwiGLU
 from hw2.rope import RotaryPositionalEmbedding
 from hw2.softmax import softmax
+from hw2.transformer import scaled_dot_product_attention
+from hw2.transformer import multihead_self_attention
 
 
 def run_linear(
@@ -119,7 +121,7 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    raise NotImplementedError
+    return scaled_dot_product_attention(Q, K, V, mask)
 
 
 def run_multihead_self_attention(
@@ -153,7 +155,17 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_model"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    attn_layer = multihead_self_attention(d_model, num_heads)
+    attn_layer.load_state_dict(
+        {
+            "w_q.weight": q_proj_weight,
+            "w_k.weight": k_proj_weight,
+            "w_v.weight": v_proj_weight,
+            "w_o.weight": o_proj_weight
+        }
+    )
+
+    return attn_layer(in_features)
 
 
 def run_multihead_self_attention_with_rope(
@@ -193,7 +205,17 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_model"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    attn_layer = multihead_self_attention(d_model, num_heads, theta, max_seq_len)
+    attn_layer.load_state_dict(
+        {
+            "w_q.weight": q_proj_weight,
+            "w_k.weight": k_proj_weight,
+            "w_v.weight": v_proj_weight,
+            "w_o.weight": o_proj_weight
+        }
+    )
+
+    return attn_layer(in_features, token_positions)
 
 
 def run_rope(
@@ -217,6 +239,7 @@ def run_rope(
     """
     rope = RotaryPositionalEmbedding(theta, d_k, max_seq_len)
     return rope(in_query_or_key, token_positions)
+
 
 def run_transformer_block(
     d_model: int,
