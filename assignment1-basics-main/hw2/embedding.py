@@ -10,8 +10,8 @@ class Embedding(nn.Module):
         embedding_mapping = torch.empty(
             num_embeddings, embedding_dim, device=device, dtype=dtype
         )
-        self.embedding_weights = nn.Parameter(embedding_mapping)
+        self.weight = nn.Parameter(embedding_mapping)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
 
-        return self.embedding_weights[token_ids]
+        return self.weight[token_ids]

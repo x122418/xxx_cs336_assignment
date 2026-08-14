@@ -7,6 +7,10 @@ import torch
 import torch.nn as nn
 from .linear import Linear
 from .rope import RotaryPositionalEmbedding
+from .SwiGLU import SwiGLU
+from .rms_norm import RMSnorm
+from .embedding import Embedding
+from .softmax import softmax
 
 
 def scaled_dot_product_attention(Q, K, V, mask):
@@ -43,19 +47,27 @@ class multihead_self_attention(nn.Module):
             self.position_embed = RotaryPositionalEmbedding(
                 theta, self.d_head, max_seq_len, device
             )
-        self.w_q = Linear(d_model, d_model, device, dtype)
-        self.w_k = Linear(d_model, d_model, device, dtype)
-        self.w_v = Linear(d_model, d_model, device, dtype)
-        self.w_o = Linear(d_model, d_model, device, dtype)
+        self.q_proj = Linear(d_model, d_model, device, dtype)
+        self.k_proj = Linear(d_model, d_model, device, dtype)
+        self.v_proj = Linear(d_model, d_model, device, dtype)
+        self.output_proj = Linear(d_model, d_model, device, dtype)
 
-    def forward(self, x: torch.Tensor, token_positions=None):
+    def forward(
+        self, x: torch.Tensor, token_positions=None
+    ):  # token_positions (batch_size, sequence_length)
         seq_len = x.shape[-2]
         # 构造因果掩码
         causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=self.device))
         # 对于kqv分别拆分多头
-        q = rearrange(self.w_q(x), "... s (num d) -> ... num s d", num=self.num_heads)
-        k = rearrange(self.w_k(x), "... s (num d) -> ... num s d", num=self.num_heads)
-        v = rearrange(self.w_v(x), "... s (num d) -> ... num s d", num=self.num_heads)
+        q = rearrange(
+            self.q_proj(x), "... s (num d) -> ... num s d", num=self.num_heads
+        )
+        k = rearrange(
+            self.k_proj(x), "... s (num d) -> ... num s d", num=self.num_heads
+        )
+        v = rearrange(
+            self.v_proj(x), "... s (num d) -> ... num s d", num=self.num_heads
+        )
         # 位置编码
         if self.use_rope:
             q = self.position_embed(q, token_positions)
@@ -65,7 +77,7 @@ class multihead_self_attention(nn.Module):
         attention_o = rearrange(
             attention, "... num s d -> ... s (num d)", num=self.num_heads
         )
-        output = self.w_o(attention_o)
+        output = self.output_proj(attention_o)
         return output
 
 
@@ -79,10 +91,50 @@ class TransformerBlock(nn.Module):
         theta: float | None = None,
     ) -> None:
         super().__init__()
-        
+        self.attn = multihead_self_attention(d_model, num_heads, theta, max_seq_len)
+        self.ffn = SwiGLU(d_model, d_ff)
+        self.ln1 = RMSnorm(d_model)
+        self.ln2 = RMSnorm(d_model)
 
     def forward(
         self,
-        x: torch.Tensor, # (batch_size, seq_len, d_model)
+        x: torch.Tensor,  # (batch_size, seq_len, d_model)
     ):
-        return
+        x = x + self.attn(self.ln1(x))
+        output = x + self.ffn(self.ln2(x))
+
+        return output
+
+
+class Transformer_LM(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        context_length: int,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        num_layers: int,
+        rope_theta: float,
+    ) -> None:
+        super().__init__()
+        self.token_embeddings = Embedding(vocab_size, d_model)
+        self.layers = nn.ModuleList(
+            TransformerBlock(d_model, num_heads, d_ff, context_length, rope_theta)
+            for _ in range(num_layers)
+        )
+        self.ln_final = RMSnorm(d_model)
+        self.lm_head = Linear(d_model, vocab_size)
+
+
+    def forward(
+        self,
+        token_ids: torch.Tensor # B S
+    ):
+        embeddings = self.token_embeddings(token_ids) # B S D
+        embeddings_attn = embeddings
+        for layer in self.layers:
+            embeddings_attn = layer(embeddings_attn)     # B S D
+        output = self.lm_head(self.ln_final(embeddings_attn))  # B S vocab_size
+
+        return output
