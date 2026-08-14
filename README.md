@@ -11,6 +11,7 @@
 
 - [x] BPE train baseline实现, Tokenizer 类的baseline版本构建
 - [x] 学习einops用法, 实现class Linear, RMSnorm等
+- [x] 实现了transformer lm 以及其所需的所有类
 
 
 #### TODO

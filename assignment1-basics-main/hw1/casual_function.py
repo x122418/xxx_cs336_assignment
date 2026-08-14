@@ -60,44 +60,44 @@
 # b_p = (a, a)
 
 
-def apply_bpe_to_pre_token(pre_token_str: str, merges, vocab, merges_rank, anti_vocab) -> list[int]:
-    pre_token_bytes = pre_token_str.encode("utf-8")
-    pre_token_bytes_list = [
-        pre_token_bytes[i : i + 1] for i in range(len(pre_token_bytes))
-    ]
-    cur_token_bytes_list = pre_token_bytes_list
+# def apply_bpe_to_pre_token(pre_token_str: str, merges, vocab, merges_rank, anti_vocab) -> list[int]:
+#     pre_token_bytes = pre_token_str.encode("utf-8")
+#     pre_token_bytes_list = [
+#         pre_token_bytes[i : i + 1] for i in range(len(pre_token_bytes))
+#     ]
+#     cur_token_bytes_list = pre_token_bytes_list
 
-    while len(cur_token_bytes_list) >= 2:
-        new_token_bytes_list = []
-        # 训练阶段的merge选取看频率 编码阶段取决于merge产生的顺序
-        candidate_pair = []
-        for i in range(len(cur_token_bytes_list) - 1):
-            cur_pair = (cur_token_bytes_list[i], cur_token_bytes_list[i + 1])
-            if cur_pair in merges:
-                candidate_pair.append(cur_pair)
-        if candidate_pair == []:
-            break
-        else:
-            chosen_pair = min(candidate_pair, key=lambda x: merges_rank[x])
-            i = 0
-            while i <= len(cur_token_bytes_list) - 1:
-                if i <= len(cur_token_bytes_list) - 2:
-                    if (
-                        chosen_pair[0] == cur_token_bytes_list[i]
-                        and chosen_pair[1] == cur_token_bytes_list[i + 1]
-                    ):
-                        new_token_bytes_list.append(chosen_pair[0] + chosen_pair[1])
-                        i+=2
-                    else:
-                        new_token_bytes_list.append(cur_token_bytes_list[i])
-                        i+=1
-                else:
-                    new_token_bytes_list.append(cur_token_bytes_list[i])
-                    i+=1
-        cur_token_bytes_list = new_token_bytes_list
-    this_token_id = [anti_vocab[i] for i in cur_token_bytes_list]
+#     while len(cur_token_bytes_list) >= 2:
+#         new_token_bytes_list = []
+#         # 训练阶段的merge选取看频率 编码阶段取决于merge产生的顺序
+#         candidate_pair = []
+#         for i in range(len(cur_token_bytes_list) - 1):
+#             cur_pair = (cur_token_bytes_list[i], cur_token_bytes_list[i + 1])
+#             if cur_pair in merges:
+#                 candidate_pair.append(cur_pair)
+#         if candidate_pair == []:
+#             break
+#         else:
+#             chosen_pair = min(candidate_pair, key=lambda x: merges_rank[x])
+#             i = 0
+#             while i <= len(cur_token_bytes_list) - 1:
+#                 if i <= len(cur_token_bytes_list) - 2:
+#                     if (
+#                         chosen_pair[0] == cur_token_bytes_list[i]
+#                         and chosen_pair[1] == cur_token_bytes_list[i + 1]
+#                     ):
+#                         new_token_bytes_list.append(chosen_pair[0] + chosen_pair[1])
+#                         i+=2
+#                     else:
+#                         new_token_bytes_list.append(cur_token_bytes_list[i])
+#                         i+=1
+#                 else:
+#                     new_token_bytes_list.append(cur_token_bytes_list[i])
+#                     i+=1
+#         cur_token_bytes_list = new_token_bytes_list
+#     this_token_id = [anti_vocab[i] for i in cur_token_bytes_list]
 
-    return this_token_id
+#     return this_token_id
 
 
 # merges = [
@@ -126,3 +126,15 @@ def apply_bpe_to_pre_token(pre_token_str: str, merges, vocab, merges_rank, anti_
 
 # print(result)
 # assert result == [257]
+
+print(48*(10240000+20582400+3200))
+
+print(80411200 + 1479628800 +1600 +80411200)
+
+print(2 * 1024 * 1600)
+
+print(2 * 1600 * 1600)
+
+print(2 * 1600 * 4288)
+
+print(2 * 1600 * 50257)
