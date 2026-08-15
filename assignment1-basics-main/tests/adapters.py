@@ -18,13 +18,13 @@ from hw2.SwiGLU import silu, SwiGLU
 from hw2.rope import RotaryPositionalEmbedding
 from hw2.softmax import softmax
 from hw2.transformer import scaled_dot_product_attention
-from hw2.transformer import multihead_self_attention
-from hw2.transformer import TransformerBlock
-from hw2.transformer import Transformer_LM
+from hw2.transformer import multihead_self_attention, TransformerBlock, Transformer_LM
 
 from hw3.cross_entropy import cross_entropy
 from hw3.AdamW import AdamW
-from hw3.lr_schedule import learning_rate_schedule
+from hw3.lr_schedule import learning_rate_schedule, grad_clip
+
+from hw4.data_loading import data_loading
 
 def run_linear(
     d_in: int,
@@ -466,7 +466,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return data_loading(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -514,7 +514,8 @@ def run_gradient_clipping(
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    grad_clip(parameters, max_l2_norm)
+    return
 
 
 def get_adamw_cls() -> Any:

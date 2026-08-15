@@ -1,4 +1,8 @@
 from math import cos, pi
+import torch
+from collections.abc import Callable, Iterable
+from einops import reduce
+import math
 
 def learning_rate_schedule(
     it: int,
@@ -17,3 +21,21 @@ def learning_rate_schedule(
         alpha_t = min_learning_rate
 
     return alpha_t
+
+def grad_clip(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
+    eps = 1e-6
+    parameters = list(parameters)
+    
+    grads = [param.grad for param in parameters if param.grad is not None]
+    if not grads:
+        return
+
+    total_norm = math.sqrt(
+        sum(torch.sum(g**2) for g in grads)
+    )
+    clip_factor = max_l2_norm/(total_norm + eps)
+    if clip_factor < 1:
+        for grad in grads:
+            grad*=clip_factor
+
+    return 
