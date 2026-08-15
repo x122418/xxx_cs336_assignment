@@ -12,6 +12,7 @@
 - [x] BPE train baseline实现, Tokenizer 类的baseline版本构建
 - [x] 学习einops用法, 实现class Linear, RMSnorm等
 - [x] 实现了transformer lm 以及其所需的所有类
+- [x] 实现check_point, data_load 等相关函数
 
 
 #### TODO
@@ -20,6 +21,7 @@
 - [ ] 优化 Tokenizer （类似前一条的优化
 - [ ] 分块阅读文件优化，调用官方的文件边界代码
 - [ ] 实现 `Tokenizer.from_files`
+- [ ] 还没有仔细研读weiruirui笔记5.1关于官方Dataset数据原语部分的内容
 
 
 #### 已知限制
