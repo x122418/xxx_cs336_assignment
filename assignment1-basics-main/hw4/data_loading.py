@@ -4,7 +4,7 @@ import torch
 
 
 def data_loading(
-    dataset: npt.NDArray, batch_size: int, context_length: int, device: str
+    dataset: npt.NDArray, batch_size: int, context_length: int, device: str | torch.device
 ):
     seq_len = len(dataset)
     # 可能的起点情况数 (需要同时考虑到inputs和targets合法)

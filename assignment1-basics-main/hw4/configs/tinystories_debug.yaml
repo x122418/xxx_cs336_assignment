@@ -1,0 +1,43 @@
+model:
+  d_model: 512
+  num_layers: 4
+  d_ff: 1344
+  theta: 10000
+  num_heads: 4
+  max_seq_len: 256    # RoPE位置编码预计算cos sin表
+  vocab_size: 10000
+
+training:
+  batch_size: 4
+  train_context_length: 256
+  max_iters: 10
+
+  max_lr: 0.001
+  min_lr: 0.0001
+  warmup_iters: 2
+  cosine_cycle_iters: 8
+
+  betas: [0.9, 0.95]
+  eps: 1e-8
+  weight_decay: 0.01
+  max_l2_norm: 1.0
+
+
+experiment:
+  seed: 42
+
+runtime:
+  device: cuda:0
+
+data:
+  train_path: data/tinystories_train.npy
+  val_path: data/tinystories_val.npy
+
+checkpoint:
+  output_dir: checkpoints/tinystories_debug
+  save_interval: 1000
+  resume_from: null
+
+  log_interval: 10
+  eval_interval: 100
+  eval_batches: 10
