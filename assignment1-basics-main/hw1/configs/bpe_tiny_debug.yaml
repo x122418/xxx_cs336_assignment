@@ -1,0 +1,13 @@
+experiment:
+  name: tinystories_5M_bpe_10k
+
+data:
+  input_path: tests/fixtures/tinystories_sample_5M.txt
+
+tokenizer:
+  vocab_size: 10000
+  special_tokens:
+    - "<|endoftext|>"
+
+output:
+  directory: artifacts/tokenizers/tinystories_5M_10k

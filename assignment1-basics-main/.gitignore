@@ -163,6 +163,7 @@ cython_debug/
 *.zip
 
 # CS336 datasets and training artifacts
+artifacts/
 data/
 checkpoints/
 wandb/

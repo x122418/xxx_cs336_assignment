@@ -101,15 +101,3 @@ def train_bpe(
         vocab_cur_size += 1
 
     return vocab, merges
-
-if __name__ == "main":
-    # 只在直接运行 train_bpe.py 时执行的临时测试
-    vocab, merges = train_bpe(
-        input_path="/home/huangjiaqi/xxx_cs336_assignment/assignment1-basics-main/data/TinyStoriesV2-GPT4-valid.txt",
-        vocab_size=257,
-        special_tokens=[],
-    )
-
-    print(len(vocab))
-    print(merges)
-    print(vocab[256])
