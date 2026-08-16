@@ -63,6 +63,40 @@ def main():
     d_model = model_cfg["d_model"]
     num_heads = model_cfg["num_heads"]
     max_seq_len = model_cfg["max_seq_len"]
+
+    assert train_data.ndim == 1, "train_data must be 1D"
+    assert val_data.ndim == 1, "val_data must be 1D"
+
+    assert batch_size > 0
+    assert 0 < train_context_length <= max_seq_len
+
+    assert len(train_data) > train_context_length
+    assert len(val_data) > train_context_length
+
+    assert training_cfg["max_iters"] > 0
+    assert training_cfg["warmup_iters"] >= 0
+    assert (
+        training_cfg["cosine_cycle_iters"]
+        > training_cfg["warmup_iters"]
+    )
+
+    assert checkpoint_cfg["log_interval"] > 0
+    assert checkpoint_cfg["eval_interval"] > 0
+    assert checkpoint_cfg["eval_batches"] > 0
+    assert checkpoint_cfg["save_interval"] > 0
+
+    assert train_data.min() >= 0
+    assert val_data.min() >= 0
+
+    assert train_data.max() < vocab_size
+    assert val_data.max() < vocab_size
+
+    if device.type == "cuda":
+        assert torch.cuda.is_available(), (
+            "CUDA device requested, but CUDA is unavailable"
+        )
+
+
     lm_model = Transformer_LM(
         vocab_size,
         max_seq_len,
@@ -84,6 +118,7 @@ def main():
 
     # 恢复checkpoint状态
     start_iteration = 0
+    assert 0 <= start_iteration <= training_cfg["max_iters"]
     resume_from = checkpoint_cfg["resume_from"]
     if resume_from is not None:
         start_iteration = load_checkpoint(
@@ -104,7 +139,7 @@ def main():
             training_cfg["max_lr"],
             training_cfg["min_lr"],
             training_cfg["warmup_iters"],
-            training_cfg["cosine_cycle_iters"],
+            training_cfg["cosine_cycle_iters"],                                                       
         )
         for group in optimizer.param_groups:
             group["lr"] = current_lr
@@ -140,7 +175,7 @@ def main():
                 "step": iteration + 1,
                 "split": "train",
                 "current_lr": current_lr,
-                "current_train_loss": train_loss.item(),
+                "loss": train_loss.item(),
                 "elapsed seconds": (time.perf_counter() - training_start_time),
             }
             with log_path.open('a', encoding="utf-8") as log_file:
@@ -149,8 +184,8 @@ def main():
                 )
 
             print(
-                f"step = {iteration+1}"
-                f"train_loss = {train_loss.item():.4f})"
+                f"step = {iteration+1} "
+                f"train_loss = {train_loss.item():.4f} "
                 f"lr={current_lr:.6e}"
             )
 
@@ -172,6 +207,17 @@ def main():
                     val_losses.append(val_loss.item())
             mean_val_loss = sum(val_losses) / len(val_losses)
             print(f"step = {iteration+1}" f"val_loss = {mean_val_loss:.4f}")
+            val_record = {
+                            "step": iteration + 1,
+                            "split": "val",
+                            "current_lr": current_lr,
+                            "loss": mean_val_loss,
+                            "elapsed seconds": (time.perf_counter() - training_start_time),
+                        }
+            with log_path.open('a', encoding="utf-8") as log_file:
+                log_file.write(
+                    json.dumps(train_record) + "\n"
+                            )
             lm_model.train()
 
         # 定期保存模型
@@ -181,7 +227,7 @@ def main():
 
     # 由于保存时定期的 可能会漏最后几个step的保存 需要额外保存
     final_checkpoint_path = checkpoint_dir / f"step_{max_iters}.pt"
-    save_checkpoint(lm_model, optimizer, max_iters, checkpoint_path)
+    save_checkpoint(lm_model, optimizer, max_iters, final_checkpoint_path)
     print(f"Training finished. " f"Final checkpoint saved to {final_checkpoint_path}")
 
 
