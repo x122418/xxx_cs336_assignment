@@ -21,15 +21,9 @@ class Tokenizer:
                 self.vocab[max_token_id+1] = token_bytes
                 max_token_id += 1
                 
-
         # 构建反向映射：bytes → token_id（用于 encode）
         self.anti_vocab = {v: k for k, v in vocab.items()}
         self.merges_rank = {merge:num for num, merge in enumerate(merges)}
-
-
-
-        
-        return
 
     def _apply_bpe_to_pre_token(
         self, pre_token_str: str
