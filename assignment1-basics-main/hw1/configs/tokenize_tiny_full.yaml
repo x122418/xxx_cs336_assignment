@@ -1,0 +1,10 @@
+vocab_path: artifacts/tokenizers/tinystories_full_10k_v2/vocab_tinystories_full_bpe_10k_v2.pkl
+
+merges_path: artifacts/tokenizers/tinystories_full_10k_v2/merges_tinystories_full_bpe_10k_v2.pkl
+
+special_tokens:
+  - "<|endoftext|>"
+
+data:
+  input_path: data/TinyStoriesV2-GPT4-valid.txt
+  output_path: artifacts/datasets/tinystories_full_10k_valid.npy

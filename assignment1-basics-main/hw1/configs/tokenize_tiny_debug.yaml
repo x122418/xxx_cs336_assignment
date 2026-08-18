@@ -1,0 +1,10 @@
+vocab_path: artifacts/tokenizers/tinystories_5M_10k/vocab_tinystories_5M_bpe_10k.pkl
+
+merges_path: artifacts/tokenizers/tinystories_5M_10k/merges_tinystories_5M_bpe_10k.pkl
+
+special_tokens:
+  - "<|endoftext|>"
+
+data:
+  input_path: tests/fixtures/tinystories_sample_5M.txt
+  output_path: artifacts/datasets/tinystories_5M_10k.npy
