@@ -9,8 +9,8 @@ import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
-from hw1.train_bpe import train_bpe
-from hw1.tokenizer import Tokenizer
+from hw1.train_bpe_v2 import train_bpe
+from hw1.tokenizer_v2 import Tokenizer
 from hw2.linear import Linear
 from hw2.embedding import Embedding
 from hw2.rms_norm import RMSnorm
