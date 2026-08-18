@@ -1,0 +1,13 @@
+experiment:
+  name: tinystories_full_bpe_10k_v2
+
+data:
+  input_path: data/TinyStoriesV2-GPT4-train.txt
+
+tokenizer:
+  vocab_size: 10000
+  special_tokens:
+    - "<|endoftext|>"
+
+output:
+  directory: artifacts/tokenizers/tinystories_full_10k_v2

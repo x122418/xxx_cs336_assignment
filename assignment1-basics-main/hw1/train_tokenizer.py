@@ -1,4 +1,4 @@
-from hw1.train_bpe import train_bpe
+from hw1.train_bpe_v2 import train_bpe
 
 from pathlib import Path
 import yaml, argparse

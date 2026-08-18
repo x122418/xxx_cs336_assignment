@@ -18,13 +18,7 @@
 #### TODO
 
 - [x] 优化 BPE trainer 性能，通过 speed test（使用倒排索引 避免反复读取整个序列
-- [ ] 优化 Tokenizer （类似前一条的优化
+- [x] 优化 Tokenizer （类似前一条的优化
 - [ ] 分块阅读文件优化，调用官方的文件边界代码
-- [ ] 实现 `Tokenizer.from_files`
 - [ ] 还没有仔细研读weiruirui笔记5.1关于官方Dataset数据原语部分的内容
 
-
-#### 已知限制
-
-- `Tokenizer.from_files` 尚未实现；当前测试通过 adapter 直接传入 vocab 和 merges。
-- Tokenizer 的内存测试显示为 `XFAIL`。
