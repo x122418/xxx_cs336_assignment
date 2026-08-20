@@ -57,7 +57,7 @@ class multihead_self_attention(nn.Module):
     ):  # token_positions (batch_size, sequence_length)
         seq_len = x.shape[-2]
         # 构造因果掩码
-        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=self.device))
+        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device))
         # 对于kqv分别拆分多头
         q = rearrange(
             self.q_proj(x), "... s (num d) -> ... num s d", num=self.num_heads
