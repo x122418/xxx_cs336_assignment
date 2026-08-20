@@ -110,6 +110,7 @@ def main():
         model_cfg["d_ff"],
         model_cfg["num_layers"],
         model_cfg["theta"],
+        use_rmsnorm
     ).to(device)
 
     # 构建优化器实例

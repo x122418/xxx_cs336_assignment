@@ -214,10 +214,10 @@ def run_multihead_self_attention_with_rope(
     attn_layer = multihead_self_attention(d_model, num_heads, theta, max_seq_len)
     attn_layer.load_state_dict(
         {
-            "w_q.weight": q_proj_weight,
-            "w_k.weight": k_proj_weight,
-            "w_v.weight": v_proj_weight,
-            "w_o.weight": o_proj_weight
+            "q_proj.weight": q_proj_weight,
+            "k_proj.weight": k_proj_weight,
+            "v_proj.weight": v_proj_weight,
+            "output_proj.weight": o_proj_weight
         }
     )
 
