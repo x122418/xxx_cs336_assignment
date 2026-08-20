@@ -89,12 +89,17 @@ class TransformerBlock(nn.Module):
         d_ff: int,
         max_seq_len: int | None = None,
         theta: float | None = None,
+        use_rmsnorm: bool = True
     ) -> None:
         super().__init__()
         self.attn = multihead_self_attention(d_model, num_heads, theta, max_seq_len)
         self.ffn = SwiGLU(d_model, d_ff)
-        self.ln1 = RMSnorm(d_model)
-        self.ln2 = RMSnorm(d_model)
+        if use_rmsnorm:
+            self.ln1 = RMSnorm(d_model)
+            self.ln2 = RMSnorm(d_model)
+        else:
+            self.ln1 = nn.Identity()
+            self.ln2 = nn.Identity()
 
     def forward(
         self,
@@ -116,14 +121,19 @@ class Transformer_LM(nn.Module):
         d_ff: int,
         num_layers: int,
         rope_theta: float,
+        use_rmsnorm: bool = True
+
     ) -> None:
         super().__init__()
         self.token_embeddings = Embedding(vocab_size, d_model)
         self.layers = nn.ModuleList(
-            TransformerBlock(d_model, num_heads, d_ff, context_length, rope_theta)
+            TransformerBlock(d_model, num_heads, d_ff, context_length, rope_theta, use_rmsnorm=use_rmsnorm)
             for _ in range(num_layers)
         )
-        self.ln_final = RMSnorm(d_model)
+        if use_rmsnorm:
+            self.ln_final = RMSnorm(d_model)
+        else:
+            self.ln_final = nn.Identity()
         self.lm_head = Linear(d_model, vocab_size)
 
 

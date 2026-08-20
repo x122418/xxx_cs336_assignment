@@ -33,6 +33,7 @@ def main():
     training_cfg = config["training"]
     runtime_cfg = config["runtime"]
     checkpoint_cfg = config["checkpoint"]
+    use_rmsnorm=model_cfg.get("use_rmsnorm", True)
 
     checkpoint_dir = Path(checkpoint_cfg["output_dir"])
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
