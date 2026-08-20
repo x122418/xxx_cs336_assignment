@@ -6,6 +6,7 @@ import json
 import time
 from pathlib import Path
 from einops import rearrange
+from torch.utils.tensorboard import SummaryWriter
 
 from hw2.transformer import Transformer_LM
 
@@ -35,6 +36,9 @@ def main():
 
     checkpoint_dir = Path(checkpoint_cfg["output_dir"])
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    writer = SummaryWriter(
+    log_dir=checkpoint_dir / "tensorboard"
+)
 
     # 设置random seed和device
     seed = experiment_cfg["seed"]
@@ -182,6 +186,16 @@ def main():
                 log_file.write(
                     json.dumps(train_record) + "\n"
                 )
+            writer.add_scalar(
+                "Loss/train",
+                train_loss.item(),
+                iteration+1,
+            )
+            writer.add_scalar(
+                "LearningRate",
+                current_lr,
+                iteration + 1,
+            )
 
             print(
                 f"step = {iteration+1} "
@@ -206,6 +220,9 @@ def main():
                     val_loss = cross_entropy(flat_val_logits, flat_val_targets)
                     val_losses.append(val_loss.item())
             mean_val_loss = sum(val_losses) / len(val_losses)
+            writer.add_scalar("Loss/validation",
+                              mean_val_loss, 
+                              iteration + 1)
             print(f"step = {iteration+1}" f"val_loss = {mean_val_loss:.4f}")
             val_record = {
                             "step": iteration + 1,
@@ -216,7 +233,7 @@ def main():
                         }
             with log_path.open('a', encoding="utf-8") as log_file:
                 log_file.write(
-                    json.dumps(train_record) + "\n"
+                    json.dumps(val_record) + "\n"
                             )
             lm_model.train()
 
@@ -229,6 +246,7 @@ def main():
     final_checkpoint_path = checkpoint_dir / f"step_{max_iters}.pt"
     save_checkpoint(lm_model, optimizer, max_iters, final_checkpoint_path)
     print(f"Training finished. " f"Final checkpoint saved to {final_checkpoint_path}")
+    writer.close()
 
 
 if __name__ == "__main__":
