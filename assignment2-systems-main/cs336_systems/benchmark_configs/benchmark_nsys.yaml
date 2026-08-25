@@ -1,0 +1,22 @@
+experiment:
+  seed: 42
+
+models:
+  small:
+    d_model: 768
+    d_ff: 3072
+    num_layers: 12
+    num_heads: 12
+
+shared_model:
+  vocab_size: 10000
+  max_seq_len: 256
+  theta: 10000
+
+benchmark:
+  batch_size: 4
+  sequence_length: 256
+  measurement_steps: 1
+
+runtime:
+  device: cuda:7
