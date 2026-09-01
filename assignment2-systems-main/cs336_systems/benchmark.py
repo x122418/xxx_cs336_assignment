@@ -22,7 +22,9 @@ parser.add_argument("--config", type=str, required=True)
 parser.add_argument("--model_size", type=str, required=True)
 parser.add_argument("--mode", type=str, required=True)
 parser.add_argument("--warmup_steps", type=int, required=True)
+parser.add_argument("--sequence_length", type=int, default=None)
 parser.add_argument("--annotate_attention", action="store_true")
+
 args = parser.parse_args()
 
 
@@ -81,7 +83,11 @@ def main():
     max_seq_len = shared_model_cfg["max_seq_len"]
 
     batch_size = benchmark_cfg["batch_size"]
-    sequence_length = benchmark_cfg["sequence_length"]
+    sequence_length = (
+    args.sequence_length
+    if args.sequence_length is not None
+    else benchmark_cfg["sequence_length"]
+)
     measurement_steps = benchmark_cfg["measurement_steps"]
 
     if args.annotate_attention:
