@@ -1,22 +1,52 @@
 from cs336_basics.model import BasicsTransformerLM
 from cs336_basics.optimizer import AdamW
 from cs336_basics.nn_utils import cross_entropy
+from einops import einsum, rearrange
+from jaxtyping import Bool, Float, Int
+from torch import Tensor
+from cs336_basics.nn_utils import softmax
 
 import argparse
 import numpy as np
+import math
 import torch
 import timeit
 import yaml
 import random
 import json
+import torch.cuda.nvtx as nvtx
+import cs336_basics.model as basic_model
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--config", type=str, required=True)
 parser.add_argument("--model_size", type=str, required=True)
 parser.add_argument("--mode", type=str, required=True)
 parser.add_argument("--warmup_steps", type=int, required=True)
+parser.add_argument("--annotate_attention", action="store_true")
 args = parser.parse_args()
 
+
+def annotated_scaled_dot_product_attention(
+    Q: Float[Tensor, " ... queries d_k"],
+    K: Float[Tensor, " ... keys    d_k"],
+    V: Float[Tensor, " ... keys    d_v"],
+    mask: Bool[Tensor, " ... queries keys"] | None = None,
+) -> Float[Tensor, " ... queries d_v"]:
+    with nvtx.range("attention"):
+        d_k = K.shape[-1]
+        with nvtx.range("attention_qk_matmul"):
+            attention_scores = einsum(Q, K, "... query d_k, ... key d_k -> ... query key") 
+        with nvtx.range("attention_scale"):
+            attention_scores = attention_scores / math.sqrt(d_k)
+
+        if mask is not None:
+            with nvtx.range("attention_mask"):
+                attention_scores = torch.where(mask, attention_scores, float("-inf"))
+        with nvtx.range("attention_softmax"):
+            attention_weights = softmax(attention_scores, dim=-1)  # Softmax over the key dimension
+        with nvtx.range("attention_av_matmul"):
+            attention_output = einsum(attention_weights, V, "... query key, ... key d_v ->  ... query d_v")
+    return attention_output
 
 def main():
     # 读取超参数配置
@@ -54,6 +84,10 @@ def main():
     sequence_length = benchmark_cfg["sequence_length"]
     measurement_steps = benchmark_cfg["measurement_steps"]
 
+    if args.annotate_attention:
+        basic_model.scaled_dot_product_attention =(
+            annotated_scaled_dot_product_attention
+        )
 
     lm_model = BasicsTransformerLM(
         vocab_size=vocab_size,
@@ -80,15 +114,18 @@ def main():
                 torch.cuda.synchronize()
                 del outputs
             elapsed_times = []
-            for _ in range(measurement_steps):
-                torch.cuda.synchronize()
-                t1 = timeit.default_timer()
-                outputs = lm_model(inputs)
-                torch.cuda.synchronize()
-                t2 = timeit.default_timer()
-                gap_time = (t2 - t1) * 1000
-                del outputs
-                elapsed_times.append(gap_time)
+
+            with nvtx.range("profile_region"):
+                for _ in range(measurement_steps):
+                    torch.cuda.synchronize()
+                    t1 = timeit.default_timer()
+                    with nvtx.range('forward'):
+                        outputs = lm_model(inputs)
+                    torch.cuda.synchronize()
+                    t2 = timeit.default_timer()
+                    gap_time = (t2 - t1) * 1000
+                    del outputs
+                    elapsed_times.append(gap_time)
 
             time_mean = np.mean(elapsed_times)
             time_std = np.std(elapsed_times)
@@ -106,19 +143,24 @@ def main():
             torch.cuda.synchronize()
             del outputs, loss
         elapsed_times = []
-        for _ in range(measurement_steps):
-            torch.cuda.synchronize()
-            t1 = timeit.default_timer()
-            lm_model.zero_grad(set_to_none=True)
-            outputs = lm_model(inputs)
-            loss = cross_entropy(outputs, targets)
-            loss.backward()
+        with nvtx.range("profile_region"):
+            for _ in range(measurement_steps):
+                torch.cuda.synchronize()
+                t1 = timeit.default_timer()
+                lm_model.zero_grad(set_to_none=True)
 
-            torch.cuda.synchronize()
-            t2 = timeit.default_timer()
-            gap_time = (t2 - t1) * 1000
-            del outputs, loss
-            elapsed_times.append(gap_time)
+                with nvtx.range("forward"):
+                    outputs = lm_model(inputs)
+                with nvtx.range("loss"):
+                    loss = cross_entropy(outputs, targets)
+                with nvtx.range("backward"):
+                    loss.backward()
+
+                torch.cuda.synchronize()
+                t2 = timeit.default_timer()
+                gap_time = (t2 - t1) * 1000
+                del outputs, loss
+                elapsed_times.append(gap_time)
 
         time_mean = np.mean(elapsed_times)
         time_std = np.std(elapsed_times)
@@ -138,20 +180,25 @@ def main():
             torch.cuda.synchronize()
             del outputs, loss
         elapsed_times = []
-        for _ in range(measurement_steps):
-            torch.cuda.synchronize()
-            t1 = timeit.default_timer()
-            optimizer.zero_grad(set_to_none=True)
-            outputs = lm_model(inputs)
-            loss = cross_entropy(outputs, targets)
-            loss.backward()
-            optimizer.step()
+        with nvtx.range("profile_region"):
+            for _ in range(measurement_steps):
+                torch.cuda.synchronize()
+                t1 = timeit.default_timer()
+                optimizer.zero_grad(set_to_none=True)
+                with nvtx.range("forward"):
+                    outputs = lm_model(inputs)
+                with nvtx.range("loss"):
+                    loss = cross_entropy(outputs, targets)
+                with nvtx.range("backward"):
+                    loss.backward()
+                with nvtx.range("update"):
+                    optimizer.step()
 
-            torch.cuda.synchronize()
-            t2 = timeit.default_timer()
-            gap_time = (t2 - t1) * 1000
-            del outputs, loss
-            elapsed_times.append(gap_time)
+                torch.cuda.synchronize()
+                t2 = timeit.default_timer()
+                gap_time = (t2 - t1) * 1000
+                del outputs, loss
+                elapsed_times.append(gap_time)
 
         time_mean = np.mean(elapsed_times)
         time_std = np.std(elapsed_times)

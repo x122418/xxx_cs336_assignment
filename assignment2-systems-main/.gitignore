@@ -173,5 +173,7 @@ traces/
 
 *.pt
 *.pth
+# Nsight profiling artifacts
 *.nsys-rep
 *.qdrep
+*.sqlite
