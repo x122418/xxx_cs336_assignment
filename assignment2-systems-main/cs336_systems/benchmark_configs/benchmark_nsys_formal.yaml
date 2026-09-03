@@ -17,7 +17,7 @@ models:
 shared_model:
   vocab_size: 10000
   theta: 10000
-  max_seq_len: 128
+  max_seq_len: 4096
 
 benchmark:
   batch_size: 4
@@ -30,7 +30,7 @@ benchmark:
     - train_step
 
 runtime:
-  device: cuda:7
+  device: cuda:5
 
 output:
   nsys_directory: results/nsys_formal

@@ -1,0 +1,30 @@
+experiment:
+  seed: 42
+
+models:
+  debug:
+    d_model: 128
+    d_ff: 512
+    num_layers: 2
+    num_heads: 4
+
+shared_model:
+  vocab_size: 10000
+  max_seq_len: 128
+  theta: 10000
+
+benchmark:
+  batch_size: 1
+  sequence_lengths: [128]
+  warmup_steps: 1
+  measurement_steps: 1
+  modes:
+    - forward
+    - forward_backward
+    - train_step
+
+runtime:
+  device: cuda:7
+
+output:
+  nsys_directory: results/nsys_suite_smoke

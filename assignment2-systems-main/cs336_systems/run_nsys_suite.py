@@ -58,6 +58,7 @@ def main():
                     "--trace=cuda,nvtx",
                     "--capture-range=nvtx",
                     "--nvtx-capture=profile_region@*",
+                    "--capture-range-end=stop",       # 新增
                     "--force-overwrite=true",
                     f"--output={output_stem}",
                     
@@ -88,50 +89,35 @@ def main():
                 print("return code:", completed.returncode)
                 print("stdout:", completed.stdout)
                 print("stderr:", completed.stderr)
-                if completed.returncode == 0:
-                    output_lines = [
-                        line for line in completed.stdout.splitlines() if line.strip()
-                    ]
+                report_path = Path(f"{output_stem}.nsys-rep")
+                if completed.returncode == 0 and report_path.exists():
+                    status = "ok"
+                    error_message = ""
 
-                    try:
-                        result = json.loads(output_lines[-1])
-                        result["error"] = ""
-                    except (IndexError, json.JSONDecodeError) as error:
-                        result = {
-                            "model_size": model_size,
-                            "mode": mode,
-                            "status": "parse_error",
-                            "error": str(error),
-                        }
+                elif completed.returncode == 0:
+                    status = "missing_report"
+                    error_message = "nsys 正常退出，但没有生成报告"
+
                 else:
                     stderr_text = completed.stderr.strip()
                     error_lines = stderr_text.splitlines()
-                    last_error_line = (
-                        error_lines[-1] if error_lines else "Unknown error"
-                    )
 
                     if "out of memory" in stderr_text.lower():
                         status = "oom"
                         error_message = "CUDA out of memory"
                     else:
                         status = "error"
-                        error_message = last_error_line
+                        error_message = error_lines[-1] if error_lines else "unknown error"
 
-                    failed_model_cfg = model_configs[model_size]
-
-                    result = {
-                        "model_size": model_size,
-                        "mode": mode,
-                        "d_model": failed_model_cfg["d_model"],
-                        "d_ff": failed_model_cfg["d_ff"],
-                        "num_layers": failed_model_cfg["num_layers"],
-                        "num_heads": failed_model_cfg["num_heads"],
-                        "batch_size": config["benchmark"]["batch_size"],
-                        "sequence_length": sequence_length,
-                        "measurement_steps": config["benchmark"]["measurement_steps"],
-                        "status": status,
-                        "error": error_message,
-                    }
+                result = {
+                    "model_size": model_size,
+                    "mode": mode,
+                    "sequence_length": sequence_length,
+                    "warmup_steps": warmup_steps,
+                    "status": status,
+                    "report_path": str(report_path) if report_path.exists() else "",
+                    "error": error_message,
+                }
 
                 print("Parsed result:", result)
 
