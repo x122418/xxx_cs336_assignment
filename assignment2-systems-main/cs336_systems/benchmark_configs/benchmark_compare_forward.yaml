@@ -1,0 +1,36 @@
+experiment:
+  seed: 42
+
+models:
+  small:
+    d_model: 768
+    d_ff: 3072
+    num_layers: 12
+    num_heads: 12
+
+  large:
+    d_model: 1280
+    d_ff: 5120
+    num_layers: 36
+    num_heads: 20
+
+shared_model:
+  vocab_size: 10000
+  theta: 10000
+  max_seq_len: 4096
+
+benchmark:
+  batch_size: 4
+  sequence_lengths: [256, 512, 1024]
+  warmup_steps: 2
+  measurement_steps: 10
+  modes:
+    - forward
+    - forward_backward
+    - train_step
+
+runtime:
+  device: cuda:7
+
+output:
+  nsys_directory: results/nsys_formal

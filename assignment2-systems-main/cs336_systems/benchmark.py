@@ -1,6 +1,6 @@
 from cs336_basics.model import BasicsTransformerLM
 from cs336_basics.optimizer import AdamW
-from cs336_basics.nn_utils import cross_entropy
+from cs336_basics.nn_utils import cross_entropy, clip_gradient
 from einops import einsum, rearrange
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
@@ -66,6 +66,7 @@ def main():
 
     # 设置random seed和device
     seed = experiment_cfg["seed"]
+    max_grad_norm = benchmark_cfg.get("max_grad_norm", None)
 
     random.seed(seed)
     np.random.seed(seed)
@@ -112,23 +113,26 @@ def main():
         0, vocab_size, (batch_size, sequence_length), dtype=torch.long, device=device
     )
 
-    torch.cuda.synchronize()
+    torch.cuda.synchronize(device)
     if mode == "forward":
         with torch.inference_mode():
             for _ in range(warmup_steps):
                 outputs = lm_model(inputs)
-                torch.cuda.synchronize()
+                torch.cuda.synchronize(device)
                 del outputs
             elapsed_times = []
 
             with nvtx.range("profile_region"):
                 for _ in range(measurement_steps):
-                    torch.cuda.synchronize()
-                    t1 = timeit.default_timer()
+                    torch.cuda.synchronize(device)
+                    
                     with nvtx.range('forward'):
+                        t1 = timeit.default_timer()
                         outputs = lm_model(inputs)
-                    torch.cuda.synchronize()
-                    t2 = timeit.default_timer()
+                        torch.cuda.synchronize(device)
+                        t2 = timeit.default_timer()
+                    
+                    
                     gap_time = (t2 - t1) * 1000
                     del outputs
                     elapsed_times.append(gap_time)
@@ -146,12 +150,12 @@ def main():
             loss = cross_entropy(outputs, targets)
             loss.backward()
 
-            torch.cuda.synchronize()
+            torch.cuda.synchronize(device)
             del outputs, loss
         elapsed_times = []
         with nvtx.range("profile_region"):
             for _ in range(measurement_steps):
-                torch.cuda.synchronize()
+                torch.cuda.synchronize(device)
                 t1 = timeit.default_timer()
                 lm_model.zero_grad(set_to_none=True)
 
@@ -162,7 +166,7 @@ def main():
                 with nvtx.range("backward"):
                     loss.backward()
 
-                torch.cuda.synchronize()
+                torch.cuda.synchronize(device)
                 t2 = timeit.default_timer()
                 gap_time = (t2 - t1) * 1000
                 del outputs, loss
@@ -181,26 +185,35 @@ def main():
             outputs = lm_model(inputs)
             loss = cross_entropy(outputs, targets)
             loss.backward()
+            if max_grad_norm is not None:
+                with nvtx.range("clip_gradient"):
+                    clip_gradient(lm_model.parameters(), max_grad_norm)
             optimizer.step()
 
-            torch.cuda.synchronize()
+            torch.cuda.synchronize(device)
             del outputs, loss
         elapsed_times = []
         with nvtx.range("profile_region"):
             for _ in range(measurement_steps):
-                torch.cuda.synchronize()
+                torch.cuda.synchronize(device)
                 t1 = timeit.default_timer()
                 optimizer.zero_grad(set_to_none=True)
                 with nvtx.range("forward"):
                     outputs = lm_model(inputs)
                 with nvtx.range("loss"):
                     loss = cross_entropy(outputs, targets)
+                
                 with nvtx.range("backward"):
                     loss.backward()
+
+                if max_grad_norm is not None:
+                    with nvtx.range("clip_gradient"):
+                        clip_gradient(lm_model.parameters(), max_grad_norm)
+
                 with nvtx.range("update"):
                     optimizer.step()
 
-                torch.cuda.synchronize()
+                torch.cuda.synchronize(device)
                 t2 = timeit.default_timer()
                 gap_time = (t2 - t1) * 1000
                 del outputs, loss
