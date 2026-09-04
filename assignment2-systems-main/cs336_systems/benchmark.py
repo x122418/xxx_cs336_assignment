@@ -3,8 +3,10 @@ from cs336_basics.optimizer import AdamW
 from cs336_basics.nn_utils import cross_entropy, clip_gradient
 from einops import einsum, rearrange
 from jaxtyping import Bool, Float, Int
+from contextlib import nullcontext
 from torch import Tensor
 from cs336_basics.nn_utils import softmax
+from pathlib import Path
 
 import argparse
 import numpy as np
@@ -24,6 +26,8 @@ parser.add_argument("--mode", type=str, required=True)
 parser.add_argument("--warmup_steps", type=int, required=True)
 parser.add_argument("--sequence_length", type=int, default=None)
 parser.add_argument("--annotate_attention", action="store_true")
+parser.add_argument("--profile_memory", action="store_true")
+parser.add_argument("--memory_snapshot_path", type = str, default=None)
 
 args = parser.parse_args()
 
@@ -89,7 +93,27 @@ def main():
     if args.sequence_length is not None
     else benchmark_cfg["sequence_length"]
 )
+    if args.profile_memory and args.memory_snapshot_path is None:
+        raise ValueError(
+            "--profile_memory requires --memory_snapshot_path"
+        )
+
+    if args.profile_memory:
+        snapshot_path = Path(args.memory_snapshot_path)
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    
     measurement_steps = benchmark_cfg["measurement_steps"]
+    precision = benchmark_cfg.get("precision", "fp32")
+    if precision not in ("fp32", "bf16"):
+        raise ValueError(f"Unsupported precision: {precision}")
+    def precision_context():
+        if precision == "bf16":
+            return torch.autocast(
+                device_type = "cuda",
+                dtype = torch.bfloat16,
+            )
+
+        return nullcontext()
 
     if args.annotate_attention:
         basic_model.scaled_dot_product_attention =(
@@ -117,18 +141,25 @@ def main():
     if mode == "forward":
         with torch.inference_mode():
             for _ in range(warmup_steps):
-                outputs = lm_model(inputs)
+                with precision_context():
+                    outputs = lm_model(inputs)
                 torch.cuda.synchronize(device)
                 del outputs
             elapsed_times = []
 
+            if args.profile_memory:
+                torch.cuda.memory._record_memory_history(max_entries = 1_000_000)
+
             with nvtx.range("profile_region"):
                 for _ in range(measurement_steps):
                     torch.cuda.synchronize(device)
+
                     
                     with nvtx.range('forward'):
+                        
                         t1 = timeit.default_timer()
-                        outputs = lm_model(inputs)
+                        with precision_context():
+                            outputs = lm_model(inputs)
                         torch.cuda.synchronize(device)
                         t2 = timeit.default_timer()
                     
@@ -136,6 +167,11 @@ def main():
                     gap_time = (t2 - t1) * 1000
                     del outputs
                     elapsed_times.append(gap_time)
+
+            if args.profile_memory:
+                torch.cuda.synchronize(device)
+                torch.cuda.memory._dump_snapshot(str(snapshot_path))
+                torch.cuda.memory._record_memory_history(enabled=None)
 
             time_mean = np.mean(elapsed_times)
             time_std = np.std(elapsed_times)
@@ -146,9 +182,19 @@ def main():
     elif mode == "forward_backward":
         for _ in range(warmup_steps):
             lm_model.zero_grad(set_to_none=True)
-            outputs = lm_model(inputs)
-            loss = cross_entropy(outputs, targets)
+            with precision_context():
+                outputs = lm_model(inputs)
+                loss = cross_entropy(outputs, targets)
             loss.backward()
+            print("loss:", loss.item())
+            print(
+                "grad finite:", 
+                all(
+                    torch.isfinite(p.grad).all().item()
+                    for p in lm_model.parameters()
+                    if p.grad is not None
+                )
+            )
 
             torch.cuda.synchronize(device)
             del outputs, loss
@@ -159,10 +205,11 @@ def main():
                 t1 = timeit.default_timer()
                 lm_model.zero_grad(set_to_none=True)
 
-                with nvtx.range("forward"):
-                    outputs = lm_model(inputs)
-                with nvtx.range("loss"):
-                    loss = cross_entropy(outputs, targets)
+                with precision_context():
+                    with nvtx.range("forward"):
+                        outputs = lm_model(inputs)
+                    with nvtx.range("loss"):
+                        loss = cross_entropy(outputs, targets)
                 with nvtx.range("backward"):
                     loss.backward()
 
@@ -182,8 +229,9 @@ def main():
         optimizer = AdamW(lm_model.parameters(), lr=1e-3)
         for _ in range(warmup_steps):
             optimizer.zero_grad(set_to_none=True)
-            outputs = lm_model(inputs)
-            loss = cross_entropy(outputs, targets)
+            with precision_context():
+                outputs = lm_model(inputs)
+                loss = cross_entropy(outputs, targets)
             loss.backward()
             if max_grad_norm is not None:
                 with nvtx.range("clip_gradient"):
@@ -193,15 +241,21 @@ def main():
             torch.cuda.synchronize(device)
             del outputs, loss
         elapsed_times = []
+
+        if args.profile_memory:
+            torch.cuda.memory._record_memory_history(max_entries = 1_000_000)
+
+
         with nvtx.range("profile_region"):
             for _ in range(measurement_steps):
                 torch.cuda.synchronize(device)
                 t1 = timeit.default_timer()
                 optimizer.zero_grad(set_to_none=True)
-                with nvtx.range("forward"):
-                    outputs = lm_model(inputs)
-                with nvtx.range("loss"):
-                    loss = cross_entropy(outputs, targets)
+                with precision_context():
+                    with nvtx.range("forward"):
+                        outputs = lm_model(inputs)
+                    with nvtx.range("loss"):
+                        loss = cross_entropy(outputs, targets)
                 
                 with nvtx.range("backward"):
                     loss.backward()
@@ -219,6 +273,11 @@ def main():
                 del outputs, loss
                 elapsed_times.append(gap_time)
 
+        if args.profile_memory:
+            torch.cuda.synchronize(device)
+            torch.cuda.memory._dump_snapshot(str(snapshot_path))
+            torch.cuda.memory._record_memory_history(enabled=None)
+
         time_mean = np.mean(elapsed_times)
         time_std = np.std(elapsed_times)
 
@@ -229,6 +288,7 @@ def main():
 
     res = {
         'model_size': model_size,
+        "precision": precision,
         'mode': mode,
         'd_model': d_model,
         'd_ff': model_cfg["d_ff"],
@@ -247,3 +307,4 @@ def main():
 if __name__ == "__main__":
     result = main()
     print(json.dumps(result))
+

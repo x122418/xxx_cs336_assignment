@@ -33,4 +33,4 @@ runtime:
   device: cuda:7
 
 output:
-  nsys_directory: results/nsys_formal
+  nsys_directory: results/nsys_compare

@@ -11,6 +11,7 @@ args = parser.parse_args()
 
 fieldnames = [
     "model_size",
+    "precision",
     "mode",
     "d_model",
     "d_ff",
@@ -100,6 +101,7 @@ def main():
 
                     result = {
                             "model_size": model_size,
+                            "precision": benchmark_config.get("precision", "fp32"),
                             "mode": mode,
                             "d_model": failed_model_cfg["d_model"],
                             "d_ff": failed_model_cfg["d_ff"],

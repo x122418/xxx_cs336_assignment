@@ -1,0 +1,26 @@
+# cs336_systems/benchmark_configs/benchmark_memory_xl_fp32.yaml
+
+experiment:
+  seed: 42
+
+models:
+  xl:
+    d_model: 2560
+    d_ff: 10240
+    num_layers: 32
+    num_heads: 32
+
+shared_model:
+  vocab_size: 10000
+  max_seq_len: 2048
+  theta: 10000
+
+benchmark:
+  batch_size: 4
+  sequence_length: 128
+  measurement_steps: 1
+  precision: fp32
+  max_grad_norm: null
+
+runtime:
+  device: cuda:4

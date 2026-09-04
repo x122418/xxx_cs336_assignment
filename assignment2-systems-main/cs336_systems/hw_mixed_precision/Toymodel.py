@@ -10,9 +10,19 @@ class ToyModel(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = self.relu(self.fc1(x))
+        x = self.fc1(x)
+        print("fc1_out:", x.dtype)
+
+        x = self.relu(x)
+        print("relu_out:", x.dtype)
+
         x = self.ln(x)
+        print("ln_out:", x.dtype)
+
         x = self.fc2(x)
+
+        print("fc2_out:", x.dtype)
+       
         return x
 
 if __name__ == "__main__":
@@ -26,6 +36,8 @@ if __name__ == "__main__":
         print("parameter:", toy.fc1.weight.dtype)
 
         logits = toy(x)
+        print("logits:", logits.dtype)
+
         loss = torch.nn.functional.cross_entropy(logits, targets)
         print("loss:", loss.dtype)
 
