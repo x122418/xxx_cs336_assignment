@@ -28,6 +28,10 @@ parser.add_argument("--sequence_length", type=int, default=None)
 parser.add_argument("--annotate_attention", action="store_true")
 parser.add_argument("--profile_memory", action="store_true")
 parser.add_argument("--memory_snapshot_path", type = str, default=None)
+parser.add_argument(
+    "--pytorch_nvtx",
+    action="store_true",
+)
 
 args = parser.parse_args()
 
@@ -53,6 +57,21 @@ def annotated_scaled_dot_product_attention(
         with nvtx.range("attention_av_matmul"):
             attention_output = einsum(attention_weights, V, "... query key, ... key d_v ->  ... query d_v")
     return attention_output
+
+def add_transformer_block_nvtx_ranges(model):
+    def make_wrapped_forward(forward_fn, index):
+        def wrapped_forward(*inputs, **kwargs):
+            with nvtx.range(f"TransformerBlock_{index}"):
+                return forward_fn(*inputs, **kwargs)
+        return wrapped_forward
+    
+    for block_idx, block in enumerate(model.layers):
+        original_forward = block.forward
+
+        block.forward = make_wrapped_forward(
+            original_forward, 
+            block_idx,
+        )
 
 def main():
     # 读取超参数配置
@@ -112,7 +131,13 @@ def main():
                 device_type = "cuda",
                 dtype = torch.bfloat16,
             )
-
+        return nullcontext()
+    
+    def pytorch_nvtx_context():
+        if args.pytorch_nvtx:
+            return torch.autograd.profiler.emit_nvtx(
+                record_shapes=True
+            )
         return nullcontext()
 
     if args.annotate_attention:
@@ -129,6 +154,9 @@ def main():
         d_ff=model_cfg["d_ff"],
         rope_theta=shared_model_cfg["theta"],
     ).to(device)
+
+    if args.pytorch_nvtx:
+        add_transformer_block_nvtx_ranges(lm_model)
 
     inputs = torch.randint(
         0, vocab_size, (batch_size, sequence_length), dtype=torch.long, device=device
@@ -245,33 +273,33 @@ def main():
         if args.profile_memory:
             torch.cuda.memory._record_memory_history(max_entries = 1_000_000)
 
+        with pytorch_nvtx_context():
+            with nvtx.range("profile_region"):
+                for _ in range(measurement_steps):
+                    torch.cuda.synchronize(device)
+                    t1 = timeit.default_timer()
+                    optimizer.zero_grad(set_to_none=True)
+                    with precision_context():
+                        with nvtx.range("forward"):
+                            outputs = lm_model(inputs)
+                        with nvtx.range("loss"):
+                            loss = cross_entropy(outputs, targets)
+                    
+                    with nvtx.range("backward"):
+                        loss.backward()
 
-        with nvtx.range("profile_region"):
-            for _ in range(measurement_steps):
-                torch.cuda.synchronize(device)
-                t1 = timeit.default_timer()
-                optimizer.zero_grad(set_to_none=True)
-                with precision_context():
-                    with nvtx.range("forward"):
-                        outputs = lm_model(inputs)
-                    with nvtx.range("loss"):
-                        loss = cross_entropy(outputs, targets)
-                
-                with nvtx.range("backward"):
-                    loss.backward()
+                    if max_grad_norm is not None:
+                        with nvtx.range("clip_gradient"):
+                            clip_gradient(lm_model.parameters(), max_grad_norm)
 
-                if max_grad_norm is not None:
-                    with nvtx.range("clip_gradient"):
-                        clip_gradient(lm_model.parameters(), max_grad_norm)
+                    with nvtx.range("update"):
+                        optimizer.step()
 
-                with nvtx.range("update"):
-                    optimizer.step()
-
-                torch.cuda.synchronize(device)
-                t2 = timeit.default_timer()
-                gap_time = (t2 - t1) * 1000
-                del outputs, loss
-                elapsed_times.append(gap_time)
+                    torch.cuda.synchronize(device)
+                    t2 = timeit.default_timer()
+                    gap_time = (t2 - t1) * 1000
+                    del outputs, loss
+                    elapsed_times.append(gap_time)
 
         if args.profile_memory:
             torch.cuda.synchronize(device)

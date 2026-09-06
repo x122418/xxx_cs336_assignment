@@ -15,8 +15,8 @@ class RMSnorm(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         in_dtype = x.dtype
         x = x.to(torch.float32) # B S d
-        rms = torch.sqrt(einsum(x, x, "B S d, B S d -> B S")/self.d_model + self.eps)
-        x = x/rearrange(rms, "B S -> B S 1")
+        rms = torch.rsqrt(einsum(x, x, "B S d, B S d -> B S")/self.d_model + self.eps)
+        x = x * rearrange(rms, "B S -> B S 1")
         
         result = einsum(x, self.weight, "B S d, d -> B S d")
         # Return the result in the original dtype
