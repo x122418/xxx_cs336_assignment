@@ -74,7 +74,6 @@ def measure_backward_time(
     del output_grad
     return sum(times_ms) / len(times_ms)
 
-
 def measure_forward_memory(q, k, v, device):
     torch.cuda.synchronize(device)
     torch.cuda.empty_cache()
@@ -281,7 +280,6 @@ def run_one_config(context_length, d):
     del v
 
     return result
-
 
 def main():
     torch.cuda.set_device(device)
