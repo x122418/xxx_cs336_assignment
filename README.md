@@ -8,6 +8,7 @@ Aaron 的 Stanford CS336 自学与作业同步仓库，用于在本地、GitHub 
 | --- | --- | --- |
 | Assignment 1 | Basics | 核心流程已完成 |
 | Assignment 2 | Systems | 已加入仓库，准备开始 |
+| Assignment 5 | Alignment | 已加入官方 Spring 2026 作业，准备开始 |
 
 ## Assignment 1: Basics
 
@@ -37,4 +38,14 @@ Aaron 的 Stanford CS336 自学与作业同步仓库，用于在本地、GitHub 
 - [ ] 梳理各章节任务、测试入口与实现顺序
 - [ ] 开始系统与性能优化相关实现
 
+## Assignment 5: Alignment
+
+### 当前状态
+
+- [x] 将 Stanford CS336 Spring 2026 Assignment 5 加入同步仓库
+- [ ] 阅读作业说明并梳理 SFT、RLVR 与 GRPO 任务
+- [ ] 在服务器上安装依赖并运行初始测试
+
+来源：`stanford-cs336/assignment5-alignment`，导入 commit
+`c2734a26308710949fe13226960a1e8cece94b7e`。
 
