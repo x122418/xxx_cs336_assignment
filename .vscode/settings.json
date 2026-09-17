@@ -1,9 +1,24 @@
 {
+    "python.terminal.activateEnvironment": false,
     "python-envs.pythonProjects": [
         {
             "path": ".",
             "envManager": "ms-python.python:venv",
             "packageManager": "ms-python.python:pip"
         }
-    ]
+    ],
+    "terminal.integrated.profiles.linux": {
+        "CS336 Assignment 5": {
+            "path": "/bin/bash",
+            "args": [
+                "--rcfile",
+                "${workspaceFolder}/.vscode/cs336-assignment5.bashrc"
+            ],
+            "env": {
+                "CS336_ASSIGNMENT5_ROOT": "${workspaceFolder}/assignment5-alignment-main",
+                "VIRTUAL_ENV": null,
+                "LD_LIBRARY_PATH": null
+            }
+        }
+    }
 }
