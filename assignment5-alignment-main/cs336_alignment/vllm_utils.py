@@ -206,6 +206,16 @@ def generate_completions(
             payload["stop"] = sampling_params["stop"]
             payload["include_stop_str_in_output"] = sampling_params.get("include_stop_str_in_output", False)
 
+        print(
+            "Generation request:",
+            {
+                "num_prompts": len(prompt_batch),
+                "n": payload["n"],
+                "temperature": payload["temperature"],
+                "seed": payload["seed"],
+            },
+            flush=True,
+        )
         response = _http_json("POST", f"{vllm_base_url}/v1/completions", payload, timeout=3600)
         choices = sorted(response["choices"], key=lambda choice: choice["index"])
         completions.extend(
