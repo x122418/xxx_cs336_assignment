@@ -16,6 +16,10 @@ from cs336_alignment.drgrpo_grader import (question_only_reward_fn, r1_zero_rewa
 
 from cs336_alignment.checkpoint import get_model_and_tokenizer
 from cs336_alignment.vllm_utils import VLLMServer
+from cs336_alignment.evaluate_grpo import (
+    evaluate_policy,
+    load_eval_examples,
+)
 
 MODEL_ID = "allenai/OLMo-2-0425-1B"
 # 改成你实际可用的两张卡
@@ -183,10 +187,11 @@ def main():
 
             server.sync_policy_weights(model)
             print("Policy weights synchronized.", flush=True)
-            checkpoint_dir = run_dir / "final_checkpoint"
-            model.save_pretrained(checkpoint_dir)
-            tokenizer.save_pretrained(checkpoint_dir)
-            print(f"Checkpoint saved: {checkpoint_dir}", flush=True)
+
+        checkpoint_dir = run_dir / "final_checkpoint"
+        model.save_pretrained(checkpoint_dir)
+        tokenizer.save_pretrained(checkpoint_dir)
+        print(f"Checkpoint saved: {checkpoint_dir}", flush=True)
 
 
     finally:
