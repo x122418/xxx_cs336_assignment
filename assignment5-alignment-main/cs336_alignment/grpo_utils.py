@@ -140,22 +140,32 @@ def compute_policy_gradient_loss(
     return (per_token_policy_gradient_loss, metadata)
 
 
+# 对于M = B*G 个rollout 的loss求和 得到总的g
 def aggregate_loss_across_microbatch(
     per_token_policy_gradient_loss: torch.Tensor,
     mask: torch.Tensor,
     loss_normalization: Literal["sequence", "constant"] = "sequence",
     normalization_constant: int | None = None,
 ) -> torch.Tensor:
-    M, S = per_token_policy_gradient_loss.shape
-
     masked_per_token_loss = mask * per_token_policy_gradient_loss
-    if loss_normalization == "sequence":
-        loss = torch.sum(
-            torch.sum(masked_per_token_loss, dim=-1) / torch.sum(mask, dim=-1) / M
-        )
 
+    if loss_normalization == "sequence":
+        # [M]：每条回答的有效 token 数，避免空回答除以0
+        lengths = mask.sum(dim=-1).clamp_min(1)
+
+        # [M]：非空回答正常平均；空回答贡献0
+        sequence_losses = masked_per_token_loss.sum(dim=-1) / lengths
+
+        # 标量：对整个 microbatch 平均
+        loss = sequence_losses.mean()
+
+    elif loss_normalization == "constant":
+        if normalization_constant is None or normalization_constant <= 0:
+            raise ValueError("normalization_constant must be positive")
+        loss = masked_per_token_loss.sum() / normalization_constant
     else:
         raise NotImplementedError
+
     return loss
 
 
@@ -196,6 +206,16 @@ def grpo_train_step(
     tokenized = tokenize_prompt_and_output(
         repeated_prompts, rollout_responses, tokenizer
     )
+
+    lengths = tokenized["response_mask"].sum(dim=-1)
+    empty_indices = (lengths == 0).nonzero(as_tuple=True)[0].tolist()
+
+    if empty_indices:
+        print("Zero-token response indices:", empty_indices, flush=True)
+        for j in empty_indices[:5]:
+            print("Response:", repr(rollout_responses[j]), flush=True)
+
+
     raw_rewards, reward_metadata = compute_rollout_rewards(
         reward_fn, rollout_responses, repeated_ground_truths
     )
@@ -216,14 +236,24 @@ def grpo_train_step(
     model.train()
     optimizer.zero_grad()
 
+    entropy_sum = torch.zeros((), device=device)
+    response_token_count = torch.zeros((), device = device)
+
     for i in range(0, len(inputs), microbatch_size):
         inputs_microbatch = inputs[i : i + microbatch_size]
         labels_microbatch = labels[i : i + microbatch_size]
         response_mask_microbatch = response_mask[i : i + microbatch_size]
         log_probs_dict = get_response_log_probs(
-            model, inputs_microbatch, labels_microbatch
+            model, inputs_microbatch, labels_microbatch, return_token_entropy=True
         )
         policy_log_probs = log_probs_dict["log_probs"]
+        with torch.no_grad():
+            entropy = log_probs_dict['token_entropy'].detach()
+            entropy_sum += (
+                entropy.float() * response_mask_microbatch
+            ).sum()
+            response_token_count += response_mask_microbatch.sum()
+
         per_token_policy_gradient_loss, _ = compute_policy_gradient_loss(
             advantages[i : i + microbatch_size],
             policy_log_probs,
@@ -252,5 +282,8 @@ def grpo_train_step(
     optimizer.step()
     # Zero gradients once across entire batch.
     optimizer.zero_grad(set_to_none = True)
+    metadata["token_entropy"] = (
+        entropy_sum / response_token_count.clamp_min(1)
+    ).item()
 
     return total_loss, metadata

@@ -4,8 +4,29 @@ import random, torch
 from pathlib import Path
 from datetime import datetime
 
-from cs336_alignment.drgrpo_grader import r1_zero_reward_fn
 from cs336_alignment.grpo_utils import grpo_train_step
+from cs336_alignment.drgrpo_grader import (
+    question_only_reward_fn,
+    r1_zero_reward_fn,
+)
+PROMPT_CONFIGS = {
+    "question_only": {
+        "path": "cs336_alignment/prompts/question_only.prompt",
+        "reward_fn": question_only_reward_fn,
+        "stop": None,
+    },
+    "r1_zero": {
+        "path": "cs336_alignment/prompts/r1_zero.prompt",
+        "reward_fn": r1_zero_reward_fn,
+        "stop": "</answer>",
+    },
+    "r1_zero_three_shot": {
+        "path": "cs336_alignment/prompts/r1_zero_three_shot_gsm8k.prompt",
+        "reward_fn": r1_zero_reward_fn,
+        "stop": "</answer>",
+    },
+}
+
 
 PROMPTS_PER_BATCH = 32
 GROUP_SIZE = 8
@@ -21,12 +42,14 @@ N_TRAIN_EXAMPLES = 6400
 N_VAL_EXAMPLES = 1024
 EVAL_EVERY = 10
 
+
+
 from cs336_alignment.vllm_utils import VLLMServer
 from cs336_alignment.drgrpo_grader import (question_only_reward_fn, r1_zero_reward_fn)
 
 from cs336_alignment.checkpoint import get_model_and_tokenizer
 from cs336_alignment.vllm_utils import VLLMServer
-from cs336_alignment.evaluate_grpo import (
+from cs336_alignment.evaluate_grpo_prompt import (
     evaluate_policy,
     load_eval_examples,
 )
@@ -39,7 +62,16 @@ parser.add_argument("--train-device", default=TRAIN_DEVICE)
 parser.add_argument("--inference-gpu", type=int, default=INFERENCE_GPU)
 parser.add_argument("--port", type=int, default=PORT)
 parser.add_argument("--lr", type=float, default=1e-5)
+parser.add_argument(
+    "--prompt-type",
+    choices=list(PROMPT_CONFIGS),
+    default="r1_zero",
+)
 args = parser.parse_args()
+
+prompt_config = PROMPT_CONFIGS[args.prompt_type]
+reward_fn = prompt_config["reward_fn"]
+stop = prompt_config["stop"]
 
 seed = args.seed
 train_device = args.train_device
@@ -70,7 +102,7 @@ def main():
     torch.cuda.set_device(train_device)
 
     run_dir = Path("runs") / (
-        f"grpo_lr{args.lr:g}_seed{seed}_"
+        f"grpo_prompt_{args.prompt_type}_lr{args.lr:g}_seed{seed}_"
         + datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     )
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -90,8 +122,10 @@ def main():
         "temperature": 1.0,
         "top_p": 1.0,
         "max_tokens": 512,
-        "prompt_path": "cs336_alignment/prompts/r1_zero.prompt",
-        "reward_fn": "r1_zero_reward_fn",
+        "prompt_type": args.prompt_type,
+        "prompt_path": prompt_config["path"],
+        "reward_fn": reward_fn.__name__,
+        "stop": stop,
         "baseline": "mean",
         "advantage_normalizer": "std",
         "n_train_examples": N_TRAIN_EXAMPLES,
@@ -142,7 +176,7 @@ def main():
 
 
     prompt_template = Path(
-        "cs336_alignment/prompts/r1_zero.prompt"
+        prompt_config["path"]
     ).read_text(encoding="utf-8")
 
     rng = random.Random(seed)
@@ -163,6 +197,8 @@ def main():
             output_dir=run_dir / "eval" / f"step_{eval_step:04d}",
             seed=0,
             batch_size=32,
+            reward_fn=reward_fn,
+            stop=stop,
         )
 
         record = {
@@ -195,9 +231,10 @@ def main():
             'max_tokens': 512,
             "n": 1,
             "seed": seed,
-            "stop": ["</answer>"],
-            "include_stop_str_in_output": True,
         }
+        if stop is not None:
+            sampling_params["stop"] = [stop]
+            sampling_params["include_stop_str_in_output"] = True
 
         for step in range(NUM_STEPS):
             batch = rng.sample(examples, PROMPTS_PER_BATCH)
@@ -222,6 +259,20 @@ def main():
                 prompts = prompts,
                 sampling_params=sampling_params,
             )
+            for j, completion in enumerate(completions):
+                if not completion.text:
+                    print(
+                        "Empty completion:",
+                        {
+                            "index": j,
+                            "text": repr(completion.text),
+                            "token_ids": completion.token_ids,
+                            "finish_reason": completion.finish_reason,
+                            "eos_token_id": tokenizer.eos_token_id,
+                        },
+                        flush=True,
+                    )
+
             rollout_responses = [completion.text for completion in completions]
 
             assert len(rollout_responses) == len(batch) * GROUP_SIZE
@@ -236,7 +287,7 @@ def main():
                 with rollout_path.open("w", encoding="utf-8") as file:
                     for j, completion in enumerate(completions):
                         example = batch[j // GROUP_SIZE]
-                        scores = r1_zero_reward_fn(
+                        scores = reward_fn(
                             completion.text,
                             repeated_ground_truths[j],
                         )
@@ -261,7 +312,7 @@ def main():
                 optimizer=optimizer,
                 gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
                 max_grad_norm = 1,
-                reward_fn = r1_zero_reward_fn,
+                reward_fn = reward_fn,
                 repeated_prompts=repeated_prompts,
                 rollout_responses=rollout_responses,
                 repeated_ground_truths=repeated_ground_truths,
