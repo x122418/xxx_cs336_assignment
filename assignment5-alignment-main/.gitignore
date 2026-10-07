@@ -169,3 +169,6 @@ cython_debug/
 
 # Local training/evaluation outputs (logs, responses, and checkpoints).
 /runs/
+
+# Generated analysis figures and summaries; keep analysis scripts tracked.
+/analysis/
