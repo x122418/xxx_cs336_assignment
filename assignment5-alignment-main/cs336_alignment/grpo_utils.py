@@ -132,12 +132,51 @@ def compute_policy_gradient_loss(
     cliprange: float | None = None,
     response_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+
     if len(raw_rewards_or_advantages.shape) == 1:
         raw_rewards_or_advantages = rearrange(raw_rewards_or_advantages, "M -> M 1")
-    per_token_policy_gradient_loss = -policy_log_probs * raw_rewards_or_advantages
-    metadata = {}
+
+    if importance_reweighting_method == "none":
+        per_token_policy_gradient_loss = -policy_log_probs * raw_rewards_or_advantages
+        metadata = {}
+
+    elif importance_reweighting_method == "noclip":
+        if old_log_probs is None:
+            raise ValueError("noclip require old_log_probs")
+        ratio = (policy_log_probs - old_log_probs.detach()).exp()
+        per_token_policy_gradient_loss = - ratio  * raw_rewards_or_advantages
+        metadata = {}
+
+    elif importance_reweighting_method == "grpo":
+        if old_log_probs is None:
+            raise ValueError("grpo require old_log_probs")
+        if cliprange is None:
+            raise ValueError("grpo require cliprange")
+        ratios = (policy_log_probs - old_log_probs.detach()).exp()
+        clipped_ratios = ratios.clamp(
+            min = 1-cliprange,
+            max = 1+cliprange,
+        )
+        clipped_objective = clipped_ratios * raw_rewards_or_advantages
+        objective = ratios * raw_rewards_or_advantages
+        per_token_policy_gradient_loss = -torch.minimum(objective, clipped_objective)
+        metadata = {}
+
+    elif importance_reweighting_method == "gspo":
+        if old_log_probs is None:
+            raise ValueError("gspo require old_log_probs")
+        if cliprange is None:
+            raise ValueError("gspo require cliprange")
+        ratios = (policy_log_probs - old_log_probs.detach()).exp()
+        clipped_ratios = ratios.clamp(
+            min = 0,
+            max = 1+cliprange,
+        )
+
 
     return (per_token_policy_gradient_loss, metadata)
+
+
 
 
 # 对于M = B*G 个rollout 的loss求和 得到总的g
@@ -195,26 +234,25 @@ def grpo_train_step(
 
     # 当前只实现标准 on-policy GRPO
     if importance_reweighting_method != "none":
-        raise NotImplementedError
-    if loss_normalization != "sequence":
-        raise NotImplementedError
+        raise NotImplementedError("Currently only on-policy variants are supported")
+
+    if loss_normalization not in {"sequence", "constant"}:
+        raise ValueError(f"Unknown loss_normalization: {loss_normalization}")
+
+    if loss_normalization == "constant":
+        if normalization_constant is None or normalization_constant <= 0:
+            raise ValueError("normalization_constant must be positive")
+
     batch_size = len(rollout_responses)
-    assert batch_size % gradient_accumulation_steps == 0
+    assert batch_size > 0
     assert gradient_accumulation_steps > 0
+    assert group_size > 0
+    assert batch_size % gradient_accumulation_steps == 0
     assert len(repeated_prompts) == len(repeated_ground_truths) == batch_size
+    assert batch_size % group_size == 0
 
-    tokenized = tokenize_prompt_and_output(
-        repeated_prompts, rollout_responses, tokenizer
-    )
-
-    lengths = tokenized["response_mask"].sum(dim=-1)
-    empty_indices = (lengths == 0).nonzero(as_tuple=True)[0].tolist()
-
-    if empty_indices:
-        print("Zero-token response indices:", empty_indices, flush=True)
-        for j in empty_indices[:5]:
-            print("Response:", repr(rollout_responses[j]), flush=True)
-
+    microbatch_size = batch_size // gradient_accumulation_steps
+    device = next(model.parameters()).device
 
     raw_rewards, reward_metadata = compute_rollout_rewards(
         reward_fn, rollout_responses, repeated_ground_truths
@@ -222,40 +260,57 @@ def grpo_train_step(
     advantages, advantage_metadata = compute_group_normalized_rewards(
         raw_rewards, group_size, baseline, advantage_eps, advantage_normalizer
     )
-    device = next(model.parameters()).device
+    if not torch.isfinite(advantages).all():
+        raise RuntimeError("Non_finite advantages")
 
-    advantages = advantages.to(device)
-    inputs = tokenized["input_ids"].to(device)
-    labels = tokenized["labels"].to(device)
-    response_mask = tokenized["response_mask"].to(device)
+    keep_indices = (advantages != 0).nonzero(as_tuple=True)[0]
+    num_kept = keep_indices.numel()
 
-    metadata = {**reward_metadata, **advantage_metadata}
+    metadata = {
+        **reward_metadata,
+        **advantage_metadata,
+        "num_active_sequences": num_kept,
+        "active_sequence_fraction": num_kept / batch_size,
+    }
     total_loss = torch.zeros((), device=device)
-    microbatch_size = len(inputs) // gradient_accumulation_steps
 
     model.train()
-    optimizer.zero_grad()
+    optimizer.zero_grad(set_to_none=True)
+
+    # 全部无学习信号：不做模型前向，也不更新 optimizer。
+    if num_kept == 0:
+        metadata["grad_norm"] = 0.0
+        # 没有计算 entropy，不把它错误地记录为0。
+        return total_loss, metadata
+
+    tokenized = tokenize_prompt_and_output(
+        repeated_prompts, rollout_responses, tokenizer
+    )
+    inputs = tokenized["input_ids"][keep_indices].to(device)
+    labels = tokenized["labels"][keep_indices].to(device)
+    response_mask = tokenized["response_mask"][keep_indices].to(device)
+    advantages = advantages[keep_indices].to(device)
 
     entropy_sum = torch.zeros((), device=device)
-    response_token_count = torch.zeros((), device = device)
+    response_token_count = torch.zeros((), device=device)
 
-    for i in range(0, len(inputs), microbatch_size):
-        inputs_microbatch = inputs[i : i + microbatch_size]
-        labels_microbatch = labels[i : i + microbatch_size]
-        response_mask_microbatch = response_mask[i : i + microbatch_size]
+    for i in range(0, num_kept, microbatch_size):
+        end = i + microbatch_size
+
+        inputs_microbatch = inputs[i:end]
+        labels_microbatch = labels[i:end]
+        response_mask_microbatch = response_mask[i:end]
         log_probs_dict = get_response_log_probs(
             model, inputs_microbatch, labels_microbatch, return_token_entropy=True
         )
         policy_log_probs = log_probs_dict["log_probs"]
         with torch.no_grad():
-            entropy = log_probs_dict['token_entropy'].detach()
-            entropy_sum += (
-                entropy.float() * response_mask_microbatch
-            ).sum()
+            entropy = log_probs_dict["token_entropy"].detach().float()
+            entropy_sum += (entropy.float() * response_mask_microbatch).sum()
             response_token_count += response_mask_microbatch.sum()
 
         per_token_policy_gradient_loss, _ = compute_policy_gradient_loss(
-            advantages[i : i + microbatch_size],
+            advantages[i:end],
             policy_log_probs,
             importance_reweighting_method,
             old_log_probs,
@@ -263,26 +318,33 @@ def grpo_train_step(
             response_mask_microbatch,
         )
 
-        loss = (
-            aggregate_loss_across_microbatch(
-                per_token_policy_gradient_loss,
-                response_mask_microbatch,
-                loss_normalization,
-                normalization_constant,
-            )
-            / gradient_accumulation_steps
+        loss = aggregate_loss_across_microbatch(
+            per_token_policy_gradient_loss,
+            response_mask_microbatch,
+            loss_normalization,
+            normalization_constant,
         )
+        if loss_normalization == "sequence":
+            loss = loss * (len(inputs_microbatch) / batch_size)
+
         total_loss += loss.detach()
         # Backward pass.
         loss.backward()
+
     if max_grad_norm is not None:
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(),
+            max_grad_norm,
+            error_if_nonfinite=True,
+        )
         metadata["grad_norm"] = grad_norm.detach().item()
+
     # Update weights once across entire batch.
     optimizer.step()
     # Zero gradients once across entire batch.
-    optimizer.zero_grad(set_to_none = True)
-    metadata["token_entropy"] = (
+    optimizer.zero_grad(set_to_none=True)
+
+    metadata["active_token_entropy"] = (
         entropy_sum / response_token_count.clamp_min(1)
     ).item()
 
