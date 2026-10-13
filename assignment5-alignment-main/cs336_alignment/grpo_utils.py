@@ -2,7 +2,7 @@ import torch
 from typing import Any, Callable, Literal
 from transformers import PreTrainedTokenizerBase
 from torch.nn.utils.rnn import pad_sequence
-from einops import rearrange, reduce
+from einops import rearrange, reduce, repeat
 from torch.optim import Optimizer
 
 
@@ -132,6 +132,7 @@ def compute_policy_gradient_loss(
     cliprange: float | None = None,
     response_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    M, S = policy_log_probs.shape
 
     if len(raw_rewards_or_advantages.shape) == 1:
         raw_rewards_or_advantages = rearrange(raw_rewards_or_advantages, "M -> M 1")
@@ -143,8 +144,8 @@ def compute_policy_gradient_loss(
     elif importance_reweighting_method == "noclip":
         if old_log_probs is None:
             raise ValueError("noclip require old_log_probs")
-        ratio = (policy_log_probs - old_log_probs.detach()).exp()
-        per_token_policy_gradient_loss = - ratio  * raw_rewards_or_advantages
+        ratio = (policy_log_probs - old_log_probs.detach()).exp()  # [BG, S]
+        per_token_policy_gradient_loss = -ratio * raw_rewards_or_advantages  # [BG, S]
         metadata = {}
 
     elif importance_reweighting_method == "grpo":
@@ -154,8 +155,8 @@ def compute_policy_gradient_loss(
             raise ValueError("grpo require cliprange")
         ratios = (policy_log_probs - old_log_probs.detach()).exp()
         clipped_ratios = ratios.clamp(
-            min = 1-cliprange,
-            max = 1+cliprange,
+            min=1 - cliprange,
+            max=1 + cliprange,
         )
         clipped_objective = clipped_ratios * raw_rewards_or_advantages
         objective = ratios * raw_rewards_or_advantages
@@ -167,16 +168,26 @@ def compute_policy_gradient_loss(
             raise ValueError("gspo require old_log_probs")
         if cliprange is None:
             raise ValueError("gspo require cliprange")
-        ratios = (policy_log_probs - old_log_probs.detach()).exp()
-        clipped_ratios = ratios.clamp(
-            min = 0,
-            max = 1+cliprange,
-        )
+        if response_mask is None:
+            raise ValueError("gspo require response_mask")
+        response_len = response_mask.sum(dim=-1, keepdim=True).clamp_min(1)  # [BS, 1]
+        s = (
+            ((policy_log_probs - old_log_probs.detach()) * response_mask / response_len)
+            .sum(dim=-1, keepdim=True)
+            .exp()
+        ) # [BG, 1]
 
+        clipped_s = s.clamp(
+            min=1 - cliprange,
+            max=1 + cliprange,
+        )
+        objective = raw_rewards_or_advantages * s  
+        clipped_objective = raw_rewards_or_advantages * clipped_s
+        per_token_policy_gradient_loss = -torch.minimum(objective, clipped_objective)  # [BG, 1]
+        per_token_policy_gradient_loss = repeat(per_token_policy_gradient_loss, "M 1 -> M S", S = S)  # [BG, S]
+        metadata = {}
 
     return (per_token_policy_gradient_loss, metadata)
-
-
 
 
 # 对于M = B*G 个rollout 的loss求和 得到总的g
@@ -225,16 +236,23 @@ def grpo_train_step(
     advantage_normalizer: Literal["std", "none", "mean"] = "std",
     # Importance reweighting and clipping
     importance_reweighting_method: Literal["none", "noclip", "grpo", "gspo"] = "none",
-    old_log_probs: torch.Tensor | None = None,
+    old_log_probs: torch.Tensor | None = None,  # [M, S]
     cliprange: float | None = None,
     # Loss normalization
     loss_normalization: Literal["sequence", "constant"] = "sequence",
     normalization_constant: int | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor | float]]:
 
-    # 当前只实现标准 on-policy GRPO
+    if importance_reweighting_method not in {"none", "noclip", "grpo", "gspo"}:
+        raise ValueError(f"Unknown importance_reweighting_method: {importance_reweighting_method}")
+
     if importance_reweighting_method != "none":
-        raise NotImplementedError("Currently only on-policy variants are supported")
+        if old_log_probs is None:
+            raise ValueError("Off-policy reweighting requires old_log_probs")
+
+    if importance_reweighting_method in {"grpo", "gspo"}:
+        if cliprange is None or cliprange < 0:
+            raise ValueError("Clipping requires nonnegative cliprange")
 
     if loss_normalization not in {"sequence", "constant"}:
         raise ValueError(f"Unknown loss_normalization: {loss_normalization}")
@@ -291,6 +309,16 @@ def grpo_train_step(
     response_mask = tokenized["response_mask"][keep_indices].to(device)
     advantages = advantages[keep_indices].to(device)
 
+    if importance_reweighting_method != "none":
+        expected_shape = tokenized['response_mask'].shape
+        if old_log_probs.shape != expected_shape:
+            raise ValueError(
+            f"old_log_probs shape {old_log_probs.shape} "
+            f"does not match tokenized shape {expected_shape}"
+            )
+        old_log_probs = old_log_probs.detach()[keep_indices.to(old_log_probs.device)].to(device)
+
+    
     entropy_sum = torch.zeros((), device=device)
     response_token_count = torch.zeros((), device=device)
 
@@ -304,6 +332,13 @@ def grpo_train_step(
             model, inputs_microbatch, labels_microbatch, return_token_entropy=True
         )
         policy_log_probs = log_probs_dict["log_probs"]
+
+        old_log_probs_microbatch = (
+            None 
+            if importance_reweighting_method == "none"
+            else old_log_probs[i:end]
+        )
+
         with torch.no_grad():
             entropy = log_probs_dict["token_entropy"].detach().float()
             entropy_sum += (entropy.float() * response_mask_microbatch).sum()
@@ -313,9 +348,9 @@ def grpo_train_step(
             advantages[i:end],
             policy_log_probs,
             importance_reweighting_method,
-            old_log_probs,
-            cliprange,
-            response_mask_microbatch,
+            old_log_probs = old_log_probs_microbatch,
+            cliprange = cliprange,
+            response_mask = response_mask_microbatch,
         )
 
         loss = aggregate_loss_across_microbatch(

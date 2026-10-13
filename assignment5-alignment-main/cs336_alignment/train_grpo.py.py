@@ -9,7 +9,8 @@ from cs336_alignment.grpo_utils import grpo_train_step
 
 PROMPTS_PER_BATCH = 32
 GROUP_SIZE = 8
-GRADIENT_ACCUMULATION_STEPS = 32
+TRAIN_BATCH_SIZE = 8
+GRADIENT_ACCUMULATION_STEPS = 1
 
 
 TRAIN_DEVICE = "cuda:5"
@@ -23,6 +24,7 @@ EVAL_EVERY = 10
 
 from cs336_alignment.vllm_utils import VLLMServer
 from cs336_alignment.drgrpo_grader import (question_only_reward_fn, r1_zero_reward_fn)
+from cs336_alignment.grpo_utils import (tokenize_prompt_and_output, get_response_log_probs)
 
 from cs336_alignment.checkpoint import get_model_and_tokenizer
 from cs336_alignment.vllm_utils import VLLMServer
@@ -34,6 +36,21 @@ from cs336_alignment.evaluate_grpo import (
 MODEL_ID = "allenai/OLMo-2-0425-1B"
 
 parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--policy-mode",
+    choices=['onpolicy', 'offpolicy'],
+    default="onpolicy"
+)
+parser.add_argument("--train-batch-size", type=int, default=None)
+parser.add_argument("--gradient-accumulation-steps", type=int, default=None)
+
+parser.add_argument(
+    "--importance_method",
+    choices=['none', 'noclip', 'grpo', 'gspo'],
+    default=None
+)
+parser.add_argument('--cliprange', type=float, default=None)
+parser.add_argument("--num_steps", type=int, default=NUM_STEPS)
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--train-device", default=TRAIN_DEVICE)
 parser.add_argument("--inference-gpu", type=int, default=INFERENCE_GPU)
@@ -41,8 +58,39 @@ parser.add_argument("--port", type=int, default=PORT)
 parser.add_argument("--lr", type=float, default=1e-5)
 args = parser.parse_args()
 
+rollout_batch_size = PROMPTS_PER_BATCH * GROUP_SIZE
+is_onpolicy = args.policy_mode ="onpolicy"
+
+train_batch_size = args.train_batch_size
+if train_batch_size is None:
+    train_batch_size = rollout_batch_size if is_onpolicy else 8
+
+gradient_accumulation_steps = args.gradient_accumulation_steps
+if gradient_accumulation_steps is None:
+    gradient_accumulation_steps = 32 if is_onpolicy else 1
+if args.importance_method is None:
+    args.importance_method = "none" if is_onpolicy else "grpo"
+
+if rollout_batch_size % train_batch_size != 0:
+    parser.error("rollout batch size 必须能被 train batch size 整除")
+if train_batch_size % GROUP_SIZE != 0:
+    parser.error("train batch size 必须包含完整的回答组")
+if train_batch_size % gradient_accumulation_steps != 0:
+    parser.error("train batch size 必须能被 gradient accumulation steps 整除")
+if is_onpolicy and train_batch_size != rollout_batch_size:
+    parser.error("onpolicy 要求每轮 rollout 只调用一次训练更新")
+
+old_log_probs_batch_size = 8
+
 seed = args.seed
 train_device = args.train_device
+
+cliprange = args.cliprange
+if cliprange is None:
+    cliprange = {
+        "grpo": 0.2,
+        "gspo": 3e-4,
+    }.get(args.importance_method)
 
 random.seed(seed)
 torch.manual_seed(seed)
@@ -70,9 +118,11 @@ def main():
     torch.cuda.set_device(train_device)
 
     run_dir = Path("runs") / (
-        f"grpo_lr{args.lr:g}_seed{seed}_"
+        f"grpo_{args.policy_mode}_{args.importance_method}_"
+        f"lr{args.lr:g}_seed{seed}_"
         + datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     )
+        
     run_dir.mkdir(parents=True, exist_ok=False)
 
     config = {
@@ -80,10 +130,18 @@ def main():
         "train_device": train_device,
         "learning_rate": args.lr,
         "inference_gpu": args.inference_gpu,
-        "num_steps": NUM_STEPS,
+        "policy_mode": args.policy_mode,
+
+        "num_steps": args.num_steps,
         "prompts_per_batch": PROMPTS_PER_BATCH,
+        "rollout_batch_size": PROMPTS_PER_BATCH * GROUP_SIZE,
+        "train_batch_size": train_batch_size,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
         "group_size": GROUP_SIZE,
-        "gradient_accumulation_steps": GRADIENT_ACCUMULATION_STEPS,
+
+        "importance_reweighting_method": args.importance_method,
+        "cliprange": cliprange,
+        "loss_normalization": "sequence",       
         "max_grad_norm": 1.0,
         "seed": seed,
         "port": args.port,
@@ -199,7 +257,8 @@ def main():
             "include_stop_str_in_output": True,
         }
 
-        for step in range(NUM_STEPS):
+        train_call_count = 0
+        for step in range(args.num_steps):
             batch = rng.sample(examples, PROMPTS_PER_BATCH)
         
             repeated_prompts = []
@@ -225,6 +284,31 @@ def main():
             rollout_responses = [completion.text for completion in completions]
 
             assert len(rollout_responses) == len(batch) * GROUP_SIZE
+
+            old_log_probs = None
+            if args.importance_method != 'none':
+                tokenized = tokenize_prompt_and_output(
+                    repeated_prompts, rollout_responses, tokenizer
+                )
+
+                old_log_probs_parts = []
+                was_training = model.training
+                model.eval()
+
+                with torch.no_grad():
+                    for start in range(0, len(rollout_responses), old_log_probs_batch_size):
+                        end = start + old_log_probs_batch_size
+                        result = get_response_log_probs(
+                            model,
+                            tokenized['input_ids'][start:end].to(train_device),
+                            tokenized['labels'][start:end].to(train_device), 
+                            return_token_entropy=False
+                        )
+                        old_log_probs_parts.append(
+                            result['log_probs'].detach().cpu()  # [TRAIN_BATCH_SIZE, S]
+                        )
+                    model.train(was_training)
+                    old_log_probs = torch.cat(old_log_probs_parts, dim = 0)
 
 
             if (step + 1) % 40 == 0:
@@ -255,37 +339,69 @@ def main():
                         }
                         file.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-            loss, metadata = grpo_train_step(
-                model = model,
-                tokenizer=tokenizer,
-                optimizer=optimizer,
-                gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-                max_grad_norm = 1,
-                reward_fn = r1_zero_reward_fn,
-                repeated_prompts=repeated_prompts,
-                rollout_responses=rollout_responses,
-                repeated_ground_truths=repeated_ground_truths,
-                group_size = GROUP_SIZE,
-            )
-            print(
-                f"Step {step+1}/{NUM_STEPS} | "
-                f"loss = {loss.item():.6f} | {metadata}",
-                flush = True,
-            )
-            record = {
-                "step": step + 1,
-                "loss": loss.item(),
-                **metadata,
-            }
+            
+            for start in range(0, len(rollout_responses), train_batch_size):
+                end = start + train_batch_size
 
-            with (run_dir / "metrics.jsonl").open("a", encoding="utf-8") as file:
-                file.write(json.dumps(record, ensure_ascii=False) + "\n")            
+                minibatch_prompts = repeated_prompts[start:end]
+                minibatch_responses = rollout_responses[start:end]
+                minibatch_truths = repeated_ground_truths[start:end]
+
+                minibatch_old_probs = None
+                if old_log_probs is not None:
+                    minibatch_tokenized = tokenize_prompt_and_output(
+                        minibatch_prompts, minibatch_responses, tokenizer
+                    )
+                    sequence_length = minibatch_tokenized['input_ids'].shape[1]
+
+                    minibatch_old_probs = (
+                        old_log_probs[start:end, :sequence_length]
+                    )
+                loss, metadata = grpo_train_step(
+                    model = model,
+                    tokenizer = tokenizer,
+                    optimizer = optimizer,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
+                    max_grad_norm = 1.0,
+                    reward_fn=r1_zero_reward_fn,
+                    repeated_prompts=minibatch_prompts,
+                    rollout_responses=minibatch_responses,
+                    repeated_ground_truths=minibatch_truths,
+                    group_size=GROUP_SIZE,
+                    importance_reweighting_method=args.importance_method,
+                    old_log_probs=minibatch_old_probs,
+                    cliprange=cliprange,
+                    loss_normalization = "sequence",
+                )
+
+                train_call_count += 1
+                num_minibatches = rollout_batch_size // train_batch_size
+                record = {
+                    "step": train_call_count,           # 累计训练调用次数；通常每次对应一次参数更新
+                    "rollout_iterations": step + 1,     # 一个rollout_iteration产生  M 条rollout
+                    "minibatch_index": start // train_batch_size,
+                    # 当前采样轮内的 minibatch 编号（从 0 开始，当前为 0～31）
+                    "loss": loss.item(),
+                    **metadata,
+                }
+                print(
+                    f"Rollout {step + 1}/{args.num_steps} | "
+                    f"Minibatch {start // train_batch_size + 1}/{num_minibatches} | "
+                    f"loss={loss.item():.6f}",
+                    flush=True,
+                )
+
+                with (run_dir / "metrics.jsonl").open(
+                    "a", encoding="utf-8"
+                ) as file:
+                    file.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 
 
             server.sync_policy_weights(model)
             print("Policy weights synchronized.", flush=True)
 
-            if (step + 1) % EVAL_EVERY == 0:
+            if (step + 1) % EVAL_EVERY == 0 or (step + 1) == args.num_steps:
                 run_validation(step + 1)
 
         checkpoint_dir = run_dir / "final_checkpoint"
