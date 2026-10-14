@@ -161,7 +161,24 @@ def compute_policy_gradient_loss(
         clipped_objective = clipped_ratios * raw_rewards_or_advantages
         objective = ratios * raw_rewards_or_advantages
         per_token_policy_gradient_loss = -torch.minimum(objective, clipped_objective)
-        metadata = {}
+        with torch.no_grad():
+            # [M, S] 统计 非0 advantage 的有效response token
+            valid = (
+                torch.ones_like(policy_log_probs, dtype = torch.bool)
+                if response_mask is None
+                else response_mask.bool()
+            )
+            valid = valid & (raw_rewards_or_advantages != 0)
+
+            clipped = (
+                (raw_rewards_or_advantages > 0) & (ratios > 1 + cliprange)
+            ) | (
+                (raw_rewards_or_advantages < 0) & (ratios < 1 - cliprange)
+            )
+            metadata = {
+                "clip_count": (clipped & valid).sum().detach(),
+                "clip_total": valid.sum().detach()
+            }
 
     elif importance_reweighting_method == "gspo":
         if old_log_probs is None:
@@ -185,7 +202,25 @@ def compute_policy_gradient_loss(
         clipped_objective = raw_rewards_or_advantages * clipped_s
         per_token_policy_gradient_loss = -torch.minimum(objective, clipped_objective)  # [BG, 1]
         per_token_policy_gradient_loss = repeat(per_token_policy_gradient_loss, "M 1 -> M S", S = S)  # [BG, S]
-        metadata = {}
+        with torch.no_grad():
+            # [M, 1]：统计非空且 advantage 非零的回答
+            valid = (
+                response_mask.bool().any(dim=-1, keepdim=True)
+                & (raw_rewards_or_advantages != 0)
+            )
+
+            clipped = (
+                (raw_rewards_or_advantages > 0) & (s > 1 + cliprange)
+            ) | (
+                (raw_rewards_or_advantages < 0) & (s < 1 - cliprange)
+            )
+
+            metadata = {
+                "clip_count": (clipped & valid).sum().detach(),
+                "clip_total": valid.sum().detach()
+            }
+
+
 
     return (per_token_policy_gradient_loss, metadata)
 
@@ -294,6 +329,12 @@ def grpo_train_step(
 
     model.train()
     optimizer.zero_grad(set_to_none=True)
+    track_clipping = importance_reweighting_method in {"grpo", "gspo"}
+    if track_clipping:
+        metadata.update({
+            "clip_count": 0,
+            "clip_total": 0,
+        })
 
     # 全部无学习信号：不做模型前向，也不更新 optimizer。
     if num_kept == 0:
@@ -322,6 +363,9 @@ def grpo_train_step(
     entropy_sum = torch.zeros((), device=device)
     response_token_count = torch.zeros((), device=device)
 
+    clip_count_sum = torch.zeros((), device=device, dtype=torch.long)
+    clip_total_sum = torch.zeros((), device=device, dtype=torch.long)
+
     for i in range(0, num_kept, microbatch_size):
         end = i + microbatch_size
 
@@ -344,7 +388,7 @@ def grpo_train_step(
             entropy_sum += (entropy.float() * response_mask_microbatch).sum()
             response_token_count += response_mask_microbatch.sum()
 
-        per_token_policy_gradient_loss, _ = compute_policy_gradient_loss(
+        per_token_policy_gradient_loss, loss_metadata = compute_policy_gradient_loss(
             advantages[i:end],
             policy_log_probs,
             importance_reweighting_method,
@@ -353,6 +397,9 @@ def grpo_train_step(
             response_mask = response_mask_microbatch,
         )
 
+        if track_clipping:
+            clip_count_sum += loss_metadata["clip_count"]
+            clip_total_sum += loss_metadata["clip_total"]
         loss = aggregate_loss_across_microbatch(
             per_token_policy_gradient_loss,
             response_mask_microbatch,
@@ -382,5 +429,16 @@ def grpo_train_step(
     metadata["active_token_entropy"] = (
         entropy_sum / response_token_count.clamp_min(1)
     ).item()
+
+    if track_clipping:
+        clip_count = clip_count_sum.item()
+        clip_total = clip_total_sum.item()
+
+        metadata["clip_count"] = clip_count
+        metadata["clip_total"] = clip_total
+
+        if clip_total > 0:
+            metadata["clip_fraction"] = clip_count / clip_total
+
 
     return total_loss, metadata

@@ -1,6 +1,8 @@
 import json
 import argparse
 import random, torch
+import subprocess
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -13,8 +15,8 @@ TRAIN_BATCH_SIZE = 8
 GRADIENT_ACCUMULATION_STEPS = 1
 
 
-TRAIN_DEVICE = "cuda:5"
-INFERENCE_GPU = 4
+TRAIN_DEVICE = "cuda:1"
+INFERENCE_GPU = 0
 PORT = 18080
 
 NUM_STEPS = 200
@@ -59,7 +61,7 @@ parser.add_argument("--lr", type=float, default=1e-5)
 args = parser.parse_args()
 
 rollout_batch_size = PROMPTS_PER_BATCH * GROUP_SIZE
-is_onpolicy = args.policy_mode ="onpolicy"
+is_onpolicy = args.policy_mode == "onpolicy"
 
 train_batch_size = args.train_batch_size
 if train_batch_size is None:
@@ -85,6 +87,16 @@ old_log_probs_batch_size = 8
 seed = args.seed
 train_device = args.train_device
 
+print(
+    f"mode={args.policy_mode}, "
+    f"importance={args.importance_method}, "
+    f"rollout_batch={rollout_batch_size}, "
+    f"train_batch={train_batch_size}, "
+    f"grad_accum={gradient_accumulation_steps}, "
+    f"microbatch={train_batch_size // gradient_accumulation_steps}",
+    flush=True,
+)
+
 cliprange = args.cliprange
 if cliprange is None:
     cliprange = {
@@ -95,6 +107,8 @@ if cliprange is None:
 random.seed(seed)
 torch.manual_seed(seed)
 torch.cuda.set_device(train_device)
+
+
 
 def load_training_examples():
     examples = []
@@ -112,6 +126,46 @@ def load_training_examples():
                 }
             )
     return examples
+
+def log_gpu_memory(stage):
+    # 等训练 GPU 上已提交的计算完成，使记录更准确。
+    torch.cuda.synchronize(train_device)
+    gib = 1024 ** 3
+
+    stats = {
+        "stage": stage,
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "train_allocated_GiB": round(
+            torch.cuda.memory_allocated(train_device) / gib, 3
+        ),
+        "train_reserved_GiB": round(
+            torch.cuda.memory_reserved(train_device) / gib, 3
+        ),
+        "train_peak_allocated_GiB": round(
+            torch.cuda.max_memory_allocated(train_device) / gib, 3
+        ),
+    }
+    print("[MEMORY] " + json.dumps(stats), flush=True)
+
+    # 同时观察独立的 vLLM 进程。
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=gpu_uuid,pid,process_name,used_gpu_memory",
+                "--format=csv",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        print(
+            result.stdout if result.returncode == 0 else result.stderr,
+            flush=True,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"[MEMORY] nvidia-smi unavailable: {exc}", flush=True)
+
 
 def main():
     torch.manual_seed(seed)
@@ -238,13 +292,20 @@ def main():
 
 
     try:
+        log_gpu_memory("before_server_start")
+
         server.start()
+        log_gpu_memory("after_server_start")
         print("vLLM server ready.", flush = True)
 
         server.init_weight_sync(policy_device=train_device)
+        log_gpu_memory("after_init_weight_sync")
+
         server.sync_policy_weights(model)
+        log_gpu_memory("after_initial_weight_sync")
         print("Initial policy weights synchronized.", flush=True)
         run_validation(0)
+        log_gpu_memory("after_initial_validation")
 
 
         sampling_params = {
@@ -277,11 +338,15 @@ def main():
             ]
             sampling_params["n"] = GROUP_SIZE
 
+            # Rollout
             completions = server.generate_completions(
                 prompts = prompts,
                 sampling_params=sampling_params,
             )
             rollout_responses = [completion.text for completion in completions]
+            if step == 0:
+                log_gpu_memory("after_first_rollout_generation")
+
 
             assert len(rollout_responses) == len(batch) * GROUP_SIZE
 
@@ -396,9 +461,13 @@ def main():
                 ) as file:
                     file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-
-
+            # 内层 minibatch 循环已结束，尚未同步权重
+            if step == 0:
+                log_gpu_memory("after_first_rollout_training")
             server.sync_policy_weights(model)
+            if step == 0:
+                log_gpu_memory("after_first_rollout_weight_sync")
+
             print("Policy weights synchronized.", flush=True)
 
             if (step + 1) % EVAL_EVERY == 0 or (step + 1) == args.num_steps:
